@@ -1,0 +1,52 @@
+# Ambientes virtuais
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Bytecode e caches do Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Segredos e variáveis de ambiente (CRÍTICO: nunca subir ao GitHub)
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Dados persistentes locais (Banco de dados SQLite, Sessões do Telegram, Downloads/Uploads temporários)
+data/
+*.db
+*.db-journal
+*.sqlite3
+*.session
+*.session-journal
+
+# Logs da aplicação e do sistema
+*.log
+app.log
+app_err.log
+
+# Caches de análise e ferramentas
+graphify-out/
+
+# Arquivos de editores e IDEs
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+*.swp
+*.swo
+
+# Arquivos de sistema operacional
+.DS_Store
+Thumbs.db
+desktop.ini

@@ -1,0 +1,2034 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Telegram Channel Cloner Pro</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#fff1f2',
+                            100: '#ffe4e6',
+                            500: '#f43f5e',
+                            600: '#e11d48', /* Carmine Rose */
+                            700: '#be123c',
+                            800: '#9f1239',
+                            900: '#881337',
+                        },
+                        darkbg: '#0a0a0c',
+                        darkcard: '#141417',
+                        darkborder: '#232328'
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- Lucide Icons CDN -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Alpine.js CDN -->
+    <script defer src="https://unpkg.com/alpinejs@3.13.3/dist/cdn.min.js"></script>
+    <!-- Custom Styles -->
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body class="bg-gray-50 dark:bg-darkbg text-gray-900 dark:text-gray-100 min-h-screen transition-colors duration-200 antialiased selection:bg-rose-500 selection:text-white" x-data="app" x-init="$nextTick(() => refreshIcons())">
+
+    <!-- LOGIN / REGISTER SCREEN -->
+    <div x-show="showLogin" x-cloak class="fixed inset-0 z-[100] flex items-center justify-center bg-gray-50 dark:bg-darkbg p-4">
+        <div class="w-full max-w-sm glass-panel bg-white/80 dark:bg-gray-900/80 rounded-3xl shadow-2xl border border-black/5 dark:border-white/10 p-7 space-y-5">
+            <div class="flex flex-col items-center space-y-2 text-center">
+                <div class="w-14 h-14 rounded-2xl bg-gradient-to-tr from-rose-500 to-red-700 flex items-center justify-center shadow-lg shadow-rose-500/25 text-white">
+                    <i data-lucide="send" class="w-7 h-7"></i>
+                </div>
+                <h1 class="text-lg font-bold text-gray-900 dark:text-white">TG Cloner <span class="text-rose-500">Pro</span></h1>
+                <p class="text-xs text-gray-500 dark:text-gray-400" x-text="loginMode === 'login' ? 'Acesse sua conta para continuar' : 'Crie sua conta em segundos'"></p>
+            </div>
+
+            <div class="grid grid-cols-2 gap-2 bg-gray-200/50 dark:bg-gray-900/50 p-1 rounded-xl text-xs font-medium">
+                <button @click="loginMode = 'login'" :class="loginMode === 'login' ? 'bg-white dark:bg-gray-800 shadow-sm font-bold text-gray-900 dark:text-white' : 'text-gray-500'" class="py-1.5 rounded-lg transition">Entrar</button>
+                <button @click="loginMode = 'register'" :class="loginMode === 'register' ? 'bg-white dark:bg-gray-800 shadow-sm font-bold text-gray-900 dark:text-white' : 'text-gray-500'" class="py-1.5 rounded-lg transition">Criar conta</button>
+            </div>
+
+            <form @submit.prevent="submitLogin()" class="space-y-3">
+                <div>
+                    <label class="block text-[11px] font-semibold text-gray-700 dark:text-gray-300 mb-1">Email ou Usuário</label>
+                    <input type="text" x-model="loginForm.email" autocomplete="username" class="w-full px-3 py-2.5 rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-xs outline-none focus:ring-1 focus:ring-rose-500" placeholder="admin, seu usuário ou seu e-mail">
+                </div>
+                <div>
+                    <label class="block text-[11px] font-semibold text-gray-700 dark:text-gray-300 mb-1">Senha</label>
+                    <input type="password" x-model="loginForm.password" autocomplete="current-password" class="w-full px-3 py-2.5 rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-xs outline-none focus:ring-1 focus:ring-rose-500" placeholder="••••••••">
+                </div>
+                <button type="submit" :disabled="loginLoading" class="w-full py-2.5 rounded-xl text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 transition btn-press disabled:opacity-50">
+                    <span x-text="loginLoading ? 'Aguarde...' : (loginMode === 'login' ? 'Entrar' : 'Criar conta')"></span>
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- DESKTOP COMPACT SIDEBAR (Hover Expand Rail) -->
+    <aside class="hidden lg:flex fixed top-0 left-0 bottom-0 z-40 w-[72px] hover:w-60 glass-sidebar flex-col justify-between p-3.5 transition-all duration-200 ease-out group shadow-xl hover:shadow-2xl overflow-hidden border-r border-black/5 dark:border-white/5">
+        <!-- Top: Logo & Main Navigation -->
+        <div class="space-y-6">
+            <!-- Brand Logo -->
+            <div class="flex items-center space-x-3.5 px-1.5 py-1">
+                <div class="w-10 h-10 rounded-2xl bg-gradient-to-tr from-rose-500 to-red-700 flex items-center justify-center shadow-lg shadow-rose-500/25 text-white flex-shrink-0">
+                    <i data-lucide="send" class="w-5 h-5"></i>
+                </div>
+                <div class="opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap overflow-hidden">
+                    <div class="flex items-center space-x-1.5">
+                        <span class="font-bold text-sm tracking-tight text-gray-900 dark:text-white">TG Cloner</span>
+                        <span class="text-[10px] font-bold px-1.5 py-0.2 rounded bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/25 uppercase">Pro</span>
+                    </div>
+                    <p class="text-[10px] text-gray-400">v2.0 Web</p>
+                </div>
+            </div>
+
+            <!-- Nav Items -->
+            <nav class="space-y-1.5">
+                <!-- Tab: Tarefas -->
+                <button @click="activeTab = 'tasks'" 
+                        :class="activeTab === 'tasks' ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 font-semibold border-rose-500' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800/60 border-transparent hover:text-gray-900 dark:hover:text-white'"
+                        class="w-full flex items-center space-x-3 px-3 py-2.5 rounded-xl border-l-2 text-xs transition-all btn-press">
+                    <i data-lucide="layout-list" class="w-5 h-5 flex-shrink-0"></i>
+                    <span class="opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap">Tarefas</span>
+                    <span class="ml-auto opacity-0 group-hover:opacity-100 px-1.5 py-0.2 text-[10px] rounded-full bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300" x-text="tasks.length"></span>
+                </button>
+
+                <!-- Tab: Nova Tarefa -->
+                <button @click="openNewTaskWizard()" 
+                        :class="activeTab === 'new-task' ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 font-semibold border-rose-500' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800/60 border-transparent hover:text-gray-900 dark:hover:text-white'"
+                        class="w-full flex items-center space-x-3 px-3 py-2.5 rounded-xl border-l-2 text-xs transition-all btn-press">
+                    <i data-lucide="circle-plus" class="w-5 h-5 flex-shrink-0"></i>
+                    <span class="opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap" x-text="isEditingTask ? 'Editar Tarefa' : 'Nova Tarefa'"></span>
+                </button>
+
+                <!-- Tab: Publicador -->
+                <button @click="activeTab = 'publisher'; publisherTab = 'list'" 
+                        :class="activeTab === 'publisher' ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 font-semibold border-rose-500' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800/60 border-transparent hover:text-gray-900 dark:hover:text-white'"
+                        class="w-full flex items-center space-x-3 px-3 py-2.5 rounded-xl border-l-2 text-xs transition-all btn-press">
+                    <i data-lucide="megaphone" class="w-5 h-5 flex-shrink-0"></i>
+                    <span class="opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap">Publicador</span>
+                    <span class="ml-auto opacity-0 group-hover:opacity-100 px-1.5 py-0.2 text-[10px] rounded-full bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300" x-text="posts.length"></span>
+                </button>
+
+                <!-- Tab: Meus Grupos -->
+                <button @click="activeTab = 'groups'" 
+                        :class="activeTab === 'groups' ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 font-semibold border-rose-500' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800/60 border-transparent hover:text-gray-900 dark:hover:text-white'"
+                        class="w-full flex items-center space-x-3 px-3 py-2.5 rounded-xl border-l-2 text-xs transition-all btn-press">
+                    <i data-lucide="users" class="w-5 h-5 flex-shrink-0"></i>
+                    <span class="opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap">Meus Grupos</span>
+                    <span class="ml-auto opacity-0 group-hover:opacity-100 px-1.5 py-0.2 text-[10px] rounded-full bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300" x-text="managedGroups.length"></span>
+                </button>
+
+                <!-- Tab: Regras Globais -->
+                <button @click="activeTab = 'rules'" 
+                        :class="activeTab === 'rules' ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 font-semibold border-rose-500' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800/60 border-transparent hover:text-gray-900 dark:hover:text-white'"
+                        class="w-full flex items-center space-x-3 px-3 py-2.5 rounded-xl border-l-2 text-xs transition-all btn-press">
+                    <i data-lucide="replace" class="w-5 h-5 flex-shrink-0"></i>
+                    <span class="opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap">Regras Globais</span>
+                    <span class="ml-auto opacity-0 group-hover:opacity-100 px-1.5 py-0.2 text-[10px] rounded-full bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300" x-text="rules.length"></span>
+                </button>
+
+                <!-- Tab: Console de Logs -->
+                <button @click="activeTab = 'logs'" 
+                        :class="activeTab === 'logs' ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 font-semibold border-rose-500' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800/60 border-transparent hover:text-gray-900 dark:hover:text-white'"
+                        class="w-full flex items-center space-x-3 px-3 py-2.5 rounded-xl border-l-2 text-xs transition-all btn-press">
+                    <i data-lucide="terminal" class="w-5 h-5 flex-shrink-0"></i>
+                    <span class="opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap">Logs ao Vivo</span>
+                    <span class="w-2 h-2 rounded-full ml-auto opacity-0 group-hover:opacity-100" :class="logs.length > 0 ? 'bg-rose-500 pulse-active' : 'bg-gray-400'"></span>
+                </button>
+            </nav>
+        </div>
+
+        <!-- Bottom: Account, Theme & Connection -->
+        <div class="space-y-2 pt-4 border-t border-black/5 dark:border-white/5">
+            <!-- Account Status Badge -->
+            <button @click="openAuthModal()" class="w-full flex items-center space-x-3 px-2.5 py-2 rounded-xl text-xs transition btn-press"
+                    :class="auth.is_authenticated ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 hover:bg-rose-500/20' : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'">
+                <div class="w-7 h-7 rounded-lg bg-rose-500/20 text-rose-500 flex items-center justify-center flex-shrink-0">
+                    <i data-lucide="user" class="w-4 h-4"></i>
+                </div>
+                <div class="opacity-0 group-hover:opacity-100 transition-opacity duration-200 text-left truncate overflow-hidden">
+                    <div class="font-semibold truncate text-[11px]" x-text="auth.is_authenticated ? (auth.account_name || 'Conectado') : 'Entrar'"></div>
+                    <div class="text-[9px] text-gray-400" x-text="auth.is_authenticated ? (auth.account_type || 'Conta') : 'Telegram'"></div>
+                </div>
+            </button>
+
+            <!-- Theme Toggle -->
+            <button @click="toggleTheme()" class="w-full flex items-center space-x-3 px-3 py-2 rounded-xl text-xs text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-800 transition btn-press">
+                <i data-lucide="sun" class="w-5 h-5 flex-shrink-0" x-show="theme === 'dark'"></i>
+                <i data-lucide="moon" class="w-5 h-5 flex-shrink-0" x-show="theme === 'light'"></i>
+                <span class="opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap" x-text="theme === 'dark' ? 'Modo Claro' : 'Modo Escuro'"></span>
+            </button>
+
+            <!-- Session Logout -->
+            <button @click="logoutSession()" class="w-full flex items-center space-x-3 px-3 py-2 rounded-xl text-xs text-gray-500 dark:text-gray-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-500/10 transition btn-press">
+                <i data-lucide="log-out" class="w-5 h-5 flex-shrink-0"></i>
+                <span class="opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap">Sair</span>
+            </button>
+        </div>
+    </aside>
+
+    <!-- MOBILE DRAWER MODAL -->
+    <div x-show="mobileDrawerOpen" x-cloak class="fixed inset-0 z-50 lg:hidden flex">
+        <!-- Backdrop -->
+        <div @click="mobileDrawerOpen = false" 
+             x-transition:enter="transition-opacity ease-out duration-300"
+             x-transition:enter-start="opacity-0"
+             x-transition:enter-end="opacity-100"
+             x-transition:leave="transition-opacity ease-in duration-200"
+             x-transition:leave-start="opacity-100"
+             x-transition:leave-end="opacity-0"
+             class="fixed inset-0 bg-black/60 backdrop-blur-sm"></div>
+
+        <!-- Drawer Content -->
+        <div x-transition:enter="transition transform ease-out duration-300"
+             x-transition:enter-start="-translate-x-full"
+             x-transition:enter-end="translate-x-0"
+             x-transition:leave="transition transform ease-in duration-200"
+             x-transition:leave-start="translate-x-0"
+             x-transition:leave-end="-translate-x-full"
+             class="relative w-72 max-w-[80vw] bg-white dark:bg-darkcard glass-panel h-full shadow-2xl p-5 flex flex-col justify-between z-10 border-r border-black/10 dark:border-white/10">
+            <div class="space-y-6">
+                <!-- Header -->
+                <div class="flex items-center justify-between border-b border-black/5 dark:border-white/5 pb-4">
+                    <div class="flex items-center space-x-3">
+                        <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-rose-500 to-red-700 flex items-center justify-center text-white font-bold">
+                            <i data-lucide="send" class="w-4 h-4"></i>
+                        </div>
+                        <span class="font-bold text-sm text-gray-900 dark:text-white">TG Cloner <span class="text-rose-500">Pro</span></span>
+                    </div>
+                    <button @click="mobileDrawerOpen = false" class="p-1 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
+                        <i data-lucide="x" class="w-5 h-5"></i>
+                    </button>
+                </div>
+
+                <!-- Nav -->
+                <nav class="space-y-1.5">
+                    <button @click="activeTab = 'tasks'; mobileDrawerOpen = false" class="w-full flex items-center space-x-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition" :class="activeTab === 'tasks' ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'">
+                        <i data-lucide="layout-list" class="w-4 h-4"></i>
+                        <span>Tarefas</span>
+                    </button>
+                    <button @click="openNewTaskWizard(); mobileDrawerOpen = false" class="w-full flex items-center space-x-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition" :class="activeTab === 'new-task' ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'">
+                        <i data-lucide="circle-plus" class="w-4 h-4"></i>
+                        <span x-text="isEditingTask ? 'Editar Tarefa' : 'Nova Tarefa'"></span>
+                    </button>
+                    <button @click="activeTab = 'publisher'; publisherTab = 'list'; mobileDrawerOpen = false" class="w-full flex items-center space-x-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition" :class="activeTab === 'publisher' ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'">
+                        <i data-lucide="megaphone" class="w-4 h-4"></i>
+                        <span>Publicador</span>
+                    </button>
+                    <button @click="activeTab = 'groups'; mobileDrawerOpen = false" class="w-full flex items-center space-x-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition" :class="activeTab === 'groups' ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'">
+                        <i data-lucide="users" class="w-4 h-4"></i>
+                        <span>Meus Grupos</span>
+                    </button>
+                    <button @click="activeTab = 'rules'; mobileDrawerOpen = false" class="w-full flex items-center space-x-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition" :class="activeTab === 'rules' ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'">
+                        <i data-lucide="replace" class="w-4 h-4"></i>
+                        <span>Regras Globais</span>
+                    </button>
+                    <button @click="activeTab = 'logs'; mobileDrawerOpen = false" class="w-full flex items-center space-x-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition" :class="activeTab === 'logs' ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'">
+                        <i data-lucide="terminal" class="w-4 h-4"></i>
+                        <span>Logs ao Vivo</span>
+                    </button>
+                </nav>
+            </div>
+
+            <!-- Footer -->
+            <div class="space-y-2 pt-4 border-t border-black/5 dark:border-white/5">
+                <button @click="openAuthModal(); mobileDrawerOpen = false" class="w-full flex items-center space-x-3 px-3 py-2.5 rounded-xl text-xs font-semibold bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300">
+                    <i data-lucide="user" class="w-4 h-4 text-rose-500"></i>
+                    <span x-text="auth.is_authenticated ? auth.account_name : 'Conectar Telegram'"></span>
+                </button>
+                <button @click="toggleTheme()" class="w-full flex items-center space-x-3 px-3 py-2 rounded-xl text-xs text-gray-500 dark:text-gray-400">
+                    <i data-lucide="sun" class="w-4 h-4" x-show="theme === 'dark'"></i>
+                    <i data-lucide="moon" class="w-4 h-4" x-show="theme === 'light'"></i>
+                    <span x-text="theme === 'dark' ? 'Modo Claro' : 'Modo Escuro'"></span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MAIN CONTENT WRAPPER -->
+    <div class="lg:ml-[72px] min-h-screen flex flex-col">
+        <!-- Top Slim Navigation Bar -->
+        <header class="sticky top-0 z-30 glass-nav">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+                <!-- Mobile Hamburger & Section Title -->
+                <div class="flex items-center space-x-3">
+                    <button @click="mobileDrawerOpen = true" class="lg:hidden p-2 rounded-xl text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 btn-press">
+                        <i data-lucide="menu" class="w-5 h-5"></i>
+                    </button>
+                    <div>
+                        <h1 class="font-bold text-base sm:text-lg tracking-tight text-gray-900 dark:text-white"
+                            x-text="activeTab === 'tasks' ? 'Painel de Tarefas' : (activeTab === 'new-task' ? (isEditingTask ? 'Editar Tarefa' : 'Nova Tarefa') : (activeTab === 'publisher' ? (publisherTab === 'composer' ? 'Novo Post / Agendamento' : 'Publicador de Conteúdo') : (activeTab === 'groups' ? 'Meus Grupos & Canais' : (activeTab === 'rules' ? 'Regras Globais' : 'Console de Logs'))))">
+                        </h1>
+                        <p class="text-[11px] text-gray-400 hidden sm:block">Telegram Channel Cloner Pro v2.0</p>
+                    </div>
+                </div>
+
+                <!-- Header Actions -->
+                <div class="flex items-center space-x-3">
+                    <!-- WebSocket Live Status -->
+                    <div class="flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium border"
+                         :class="wsConnected ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/25' : 'bg-gray-100 text-gray-500 border-gray-300 dark:bg-gray-900 dark:text-gray-400 dark:border-gray-800'"
+                         :title="wsConnected ? 'Streaming WebSocket Ativo' : 'WebSocket Desconectado'">
+                        <span class="w-1.5 h-1.5 rounded-full" :class="wsConnected ? 'bg-rose-500 pulse-active' : 'bg-gray-400'"></span>
+                        <span class="hidden sm:inline" x-text="wsConnected ? 'Streaming Ativo' : 'Offline'"></span>
+                    </div>
+
+                    <!-- Quick Action Buttons -->
+                    <button x-show="activeTab === 'tasks' || activeTab === 'new-task' || activeTab === 'rules' || activeTab === 'logs'" @click="openNewTaskWizard()" class="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold text-white bg-gradient-to-r from-rose-500 to-red-700 hover:from-rose-600 hover:to-red-800 shadow-md shadow-rose-500/25 transition btn-press">
+                        <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+                        <span>Nova Tarefa</span>
+                    </button>
+                    <button x-show="activeTab === 'publisher'" @click="openNewPostComposer()" class="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold text-white bg-gradient-to-r from-rose-500 to-red-700 hover:from-rose-600 hover:to-red-800 shadow-md shadow-rose-500/25 transition btn-press">
+                        <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+                        <span>Novo Post</span>
+                    </button>
+                    <button x-show="activeTab === 'groups'" @click="openImportModal()" class="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold text-white bg-gradient-to-r from-rose-500 to-red-700 hover:from-rose-600 hover:to-red-800 shadow-md shadow-rose-500/25 transition btn-press">
+                        <i data-lucide="download" class="w-3.5 h-3.5"></i>
+                        <span>Importar Diálogos</span>
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Body -->
+        <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6 flex-1 w-full overflow-hidden">
+
+            <!-- Onboarding Alert Banner (If Disconnected) -->
+            <div x-show="!auth.is_authenticated" class="glass-panel p-5 rounded-3xl border-rose-500/30 bg-gradient-to-r from-rose-500/10 via-red-500/5 to-transparent flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 card-hover">
+                <div class="flex items-center space-x-3.5">
+                    <div class="w-11 h-11 rounded-2xl bg-rose-600 text-white flex items-center justify-center shadow-md shadow-rose-600/20 flex-shrink-0">
+                        <i data-lucide="send" class="w-5 h-5"></i>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-sm sm:text-base text-gray-900 dark:text-white">Conecte sua conta do Telegram para começar</h3>
+                        <p class="text-xs text-gray-600 dark:text-gray-400 mt-0.5">Autentique com sua conta pessoal ou bot para carregar canais e criar tarefas de clonagem com 1 clique.</p>
+                    </div>
+                </div>
+                <button @click="openAuthModal()" class="px-5 py-2.5 rounded-xl text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 shadow-md shadow-rose-600/25 transition btn-press flex items-center space-x-1.5 whitespace-nowrap">
+                    <span>Conectar Telegram Agora</span>
+                    <i data-lucide="arrow-right" class="w-3.5 h-3.5"></i>
+                </button>
+            </div>
+
+            <!-- Top Metrics Cards -->
+            <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <!-- Active Tasks Metric -->
+                <div class="glass-panel p-4 rounded-2xl shadow-sm card-hover">
+                    <div class="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400 mb-1">
+                        <span>Tarefas em Execução</span>
+                        <i data-lucide="activity" class="w-4 h-4 text-rose-500"></i>
+                    </div>
+                    <div class="text-2xl font-bold tracking-tight text-gray-900 dark:text-white" x-text="activeTasksCount">0</div>
+                    <div class="text-[11px] text-gray-400 mt-1" x-text="`${tasks.length} tarefas cadastradas`"></div>
+                </div>
+
+                <!-- Copied Messages Metric -->
+                <div class="glass-panel p-4 rounded-2xl shadow-sm card-hover">
+                    <div class="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400 mb-1">
+                        <span>Mensagens Clonadas</span>
+                        <i data-lucide="check-circle-2" class="w-4 h-4 text-rose-500"></i>
+                    </div>
+                    <div class="text-2xl font-bold tracking-tight text-rose-600 dark:text-rose-400" x-text="totalCopiedCount">0</div>
+                    <div class="text-[11px] text-gray-400 mt-1">Reenvios concluídos</div>
+                </div>
+
+                <!-- Skipped Messages Metric -->
+                <div class="glass-panel p-4 rounded-2xl shadow-sm card-hover">
+                    <div class="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400 mb-1">
+                        <span>Mensagens Filtradas</span>
+                        <i data-lucide="filter" class="w-4 h-4 text-gray-400"></i>
+                    </div>
+                    <div class="text-2xl font-bold tracking-tight text-gray-900 dark:text-white" x-text="totalSkippedCount">0</div>
+                    <div class="text-[11px] text-gray-400 mt-1">Ignoradas por tipo/vazias</div>
+                </div>
+
+                <!-- Error Metric -->
+                <div class="glass-panel p-4 rounded-2xl shadow-sm card-hover">
+                    <div class="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400 mb-1">
+                        <span>Erros Totais</span>
+                        <i data-lucide="alert-triangle" class="w-4 h-4 text-red-600"></i>
+                    </div>
+                    <div class="text-2xl font-bold tracking-tight" :class="totalErrorCount > 0 ? 'text-red-600' : 'text-gray-900 dark:text-white'" x-text="totalErrorCount">0</div>
+                    <div class="text-[11px] text-gray-400 mt-1">Falhas ou flood waits</div>
+                </div>
+            </div>
+
+            <!-- TAB 1: TASKS LIST WITH SLIDE-RIGHT TRANSITION -->
+            <section x-show="activeTab === 'tasks'" 
+                     x-transition:enter="transition transform ease-out duration-300"
+                     x-transition:enter-start="opacity-0 translate-x-10"
+                     x-transition:enter-end="opacity-100 translate-x-0"
+                     x-transition:leave="transition ease-in duration-100"
+                     x-transition:leave-start="opacity-100"
+                     x-transition:leave-end="opacity-0"
+                     class="space-y-4">
+
+                <!-- Filter & Search Bar -->
+                <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3" x-show="tasks.length > 0">
+                    <!-- Status Filter Pills -->
+                    <div class="flex items-center space-x-1.5 bg-gray-100 dark:bg-gray-900/60 p-1 rounded-xl text-xs">
+                        <button @click="taskFilter = 'all'" :class="taskFilter === 'all' ? 'bg-white dark:bg-gray-800 shadow-sm text-gray-900 dark:text-white font-semibold' : 'text-gray-500 hover:text-gray-900 dark:hover:text-white'" class="px-3 py-1 rounded-lg transition btn-press">
+                            Todas (<span x-text="tasks.length"></span>)
+                        </button>
+                        <button @click="taskFilter = 'running'" :class="taskFilter === 'running' ? 'bg-white dark:bg-gray-800 shadow-sm text-rose-600 dark:text-rose-400 font-semibold' : 'text-gray-500 hover:text-gray-900 dark:hover:text-white'" class="px-3 py-1 rounded-lg transition btn-press">
+                            Ativas (<span x-text="tasks.filter(t => t.status === 'running').length"></span>)
+                        </button>
+                        <button @click="taskFilter = 'paused'" :class="taskFilter === 'paused' ? 'bg-white dark:bg-gray-800 shadow-sm text-gray-700 dark:text-gray-300 font-semibold' : 'text-gray-500 hover:text-gray-900 dark:hover:text-white'" class="px-3 py-1 rounded-lg transition btn-press">
+                            Pausadas (<span x-text="tasks.filter(t => t.status === 'paused').length"></span>)
+                        </button>
+                        <button @click="taskFilter = 'completed'" :class="taskFilter === 'completed' ? 'bg-white dark:bg-gray-800 shadow-sm text-gray-700 dark:text-gray-300 font-semibold' : 'text-gray-500 hover:text-gray-900 dark:hover:text-white'" class="px-3 py-1 rounded-lg transition btn-press">
+                            Concluídas (<span x-text="tasks.filter(t => t.status === 'completed').length"></span>)
+                        </button>
+                    </div>
+
+                    <!-- Search Input -->
+                    <div class="relative">
+                        <input type="text" x-model="taskSearch" placeholder="Buscar tarefa ou canal..." class="w-full sm:w-64 pl-9 pr-3 py-1.5 rounded-xl border border-gray-200 dark:border-gray-800 bg-white/70 dark:bg-gray-900/70 text-xs focus:ring-2 focus:ring-rose-500 outline-none transition">
+                        <i data-lucide="search" class="w-4 h-4 absolute left-2.5 top-2 text-gray-400"></i>
+                    </div>
+                </div>
+
+                <!-- Empty state if no tasks -->
+                <div x-show="tasks.length === 0" class="glass-panel rounded-3xl p-12 text-center space-y-4">
+                    <div class="w-16 h-16 rounded-full bg-rose-500/10 text-rose-500 mx-auto flex items-center justify-center">
+                        <i data-lucide="rocket" class="w-8 h-8"></i>
+                    </div>
+                    <h3 class="text-lg font-semibold">Nenhuma tarefa criada</h3>
+                    <p class="text-sm text-gray-500 dark:text-gray-400 max-w-md mx-auto">
+                        Crie sua primeira tarefa com o assistente guiado para clonar histórico ou sincronizar novas postagens em tempo real.
+                    </p>
+                    <div>
+                        <button @click="openNewTaskWizard()" class="px-5 py-2.5 rounded-xl text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 transition btn-press shadow-md shadow-rose-600/20">
+                            + Criar Tarefa com Assistente
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Empty state if filter returns 0 -->
+                <div x-show="tasks.length > 0 && filteredTasks.length === 0" class="glass-panel rounded-3xl p-8 text-center space-y-2 text-gray-500 dark:text-gray-400 text-xs">
+                    <p>Nenhuma tarefa encontrada para este filtro ou busca.</p>
+                    <button @click="taskFilter = 'all'; taskSearch = ''" class="text-rose-500 font-semibold hover:underline">Limpar filtros</button>
+                </div>
+
+                <!-- Task Cards Grid -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <template x-for="task in filteredTasks" :key="task.id">
+                        <div class="glass-panel rounded-2xl p-5 space-y-4 relative border transition hover:border-rose-500/30 dark:hover:border-rose-500/30 shadow-sm flex flex-col justify-between card-hover">
+                            <div>
+                                <!-- Top Row: Name, Mode & Status -->
+                                <div class="flex items-start justify-between gap-2">
+                                    <div>
+                                        <div class="flex items-center space-x-2">
+                                            <h4 class="font-bold text-base tracking-tight text-gray-900 dark:text-white" x-text="task.name"></h4>
+                                            <span class="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase"
+                                                  :class="task.mode === 'historical' ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/25' : 'bg-red-950/60 text-red-300 border border-red-800/40'"
+                                                  x-text="task.mode === 'historical' ? 'Histórico' : 'Tempo Real'">
+                                            </span>
+                                        </div>
+                                        <div class="text-xs text-gray-500 dark:text-gray-400 flex items-center space-x-1.5 mt-1">
+                                            <span class="font-medium text-gray-700 dark:text-gray-300" x-text="task.origin_title || task.origin_chat"></span>
+                                            <i data-lucide="arrow-right" class="w-3 h-3 text-gray-400"></i>
+                                            <span class="font-medium text-gray-700 dark:text-gray-300" x-text="task.dest_title || task.dest_chat"></span>
+                                        </div>
+                                    </div>
+
+                                    <!-- Status Badge (PT-BR) -->
+                                    <span class="px-2.5 py-1 text-xs font-semibold rounded-full capitalize whitespace-nowrap"
+                                          :class="getStatusBadgeClass(task.status)"
+                                          x-text="getStatusLabel(task.status)">
+                                    </span>
+                                </div>
+
+                                <!-- Progress Bar & ETA (Historical) -->
+                                <div x-show="task.mode === 'historical'" class="space-y-1.5 mt-3">
+                                    <div class="flex justify-between text-xs text-gray-500 dark:text-gray-400 font-medium">
+                                        <span>Progresso</span>
+                                        <div class="flex items-center space-x-2">
+                                            <span x-show="getTaskETA(task)" class="text-rose-500 text-[11px] font-normal flex items-center space-x-1">
+                                                <i data-lucide="timer" class="w-3 h-3"></i>
+                                                <span x-text="getTaskETA(task)"></span>
+                                            </span>
+                                            <span x-text="`${task.total_messages > 0 ? Math.min(100, Math.round((task.processed_messages / task.total_messages) * 100)) : 0}% (${Math.min(task.processed_messages || 0, task.total_messages || 0)}/${task.total_messages})`">0%</span>
+                                        </div>
+                                    </div>
+                                    <div class="w-full h-2 rounded-full bg-gray-200 dark:bg-gray-800 overflow-hidden">
+                                        <div class="h-full bg-gradient-to-r from-rose-500 to-red-700 rounded-full progress-bar-fill"
+                                             :style="`width: ${task.total_messages > 0 ? Math.min(100, (task.processed_messages / task.total_messages) * 100) : 0}%`">
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Counters Summary -->
+                                <div class="grid grid-cols-3 gap-2 py-2 px-3 rounded-xl bg-gray-100/70 dark:bg-gray-900/50 text-xs mt-3">
+                                    <div>
+                                        <span class="text-gray-400 block text-[10px]">Copiadas</span>
+                                        <span class="font-bold text-rose-600 dark:text-rose-400 text-sm" x-text="task.copied_count">0</span>
+                                    </div>
+                                    <div>
+                                        <span class="text-gray-400 block text-[10px]">Ignoradas</span>
+                                        <span class="font-bold text-gray-700 dark:text-gray-300 text-sm" x-text="task.skipped_count">0</span>
+                                    </div>
+                                    <div>
+                                        <span class="text-gray-400 block text-[10px]">Erros</span>
+                                        <span class="font-bold text-red-600 text-sm" x-text="task.error_count">0</span>
+                                    </div>
+                                </div>
+
+                                <!-- Embedded Mini-Terminal per Task (Collapsible) -->
+                                <div x-show="expandedTaskLogs[task.id]" x-collapse class="mt-3 rounded-xl bg-gray-950 p-3 text-[11px] font-mono border border-gray-800 space-y-1 max-h-48 overflow-y-auto terminal-scroll text-gray-300">
+                                    <div class="flex justify-between items-center text-[10px] text-gray-400 border-b border-gray-800 pb-1 mb-1">
+                                        <span>Logs ao Vivo da Tarefa</span>
+                                        <span x-text="`${getTaskLogs(task.id).length} eventos`"></span>
+                                    </div>
+                                    <template x-for="(log, lIdx) in getTaskLogs(task.id)" :key="lIdx">
+                                        <div class="flex items-start space-x-1.5">
+                                            <span class="text-gray-500 select-none" x-text="`[${log.timestamp}]`"></span>
+                                            <span :class="{
+                                                'text-rose-400': log.level === 'success' || log.level === 'info',
+                                                'text-gray-400': log.level === 'warning',
+                                                'text-red-500': log.level === 'error'
+                                            }" x-text="log.message"></span>
+                                        </div>
+                                    </template>
+                                    <div x-show="getTaskLogs(task.id).length === 0" class="text-gray-600 italic text-center py-2">
+                                        Nenhum log registrado para esta tarefa ainda.
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Action Buttons Row -->
+                            <div class="flex items-center justify-between pt-3 border-t border-gray-100 dark:border-gray-800 gap-2">
+                                <!-- Left Controls: Start, Pause, Resume, Cancel -->
+                                <div class="flex items-center space-x-1.5 flex-wrap">
+                                    <template x-if="task.status === 'pending'">
+                                        <button @click="startTask(task.id)" class="px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 transition btn-press flex items-center space-x-1">
+                                            <i data-lucide="play" class="w-3.5 h-3.5"></i>
+                                            <span>Iniciar</span>
+                                        </button>
+                                    </template>
+
+                                    <template x-if="task.status === 'failed' || task.status === 'cancelled'">
+                                        <button @click="syncNewMessages(task.id)" :disabled="syncingTaskId === task.id" class="px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 transition btn-press flex items-center space-x-1.5 disabled:opacity-50" title="Continuar a partir de onde a clonagem foi interrompida">
+                                            <i data-lucide="play" class="w-3.5 h-3.5" x-show="syncingTaskId !== task.id"></i>
+                                            <i data-lucide="refresh-cw" class="w-3.5 h-3.5 animate-spin" x-show="syncingTaskId === task.id"></i>
+                                            <span x-show="syncingTaskId !== task.id">Continuar de Onde Parou</span>
+                                            <span x-show="syncingTaskId === task.id">Verificando...</span>
+                                        </button>
+                                    </template>
+
+                                    <template x-if="task.status === 'completed'">
+                                        <button @click="syncNewMessages(task.id)" :disabled="syncingTaskId === task.id" class="px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 transition btn-press flex items-center space-x-1.5 disabled:opacity-50" title="Buscar e clonar novas postagens a partir de onde parou">
+                                            <i data-lucide="refresh-cw" class="w-3.5 h-3.5" :class="syncingTaskId === task.id ? 'animate-spin' : ''"></i>
+                                            <span x-show="syncingTaskId !== task.id">Continuar / Sincronizar Novos</span>
+                                            <span x-show="syncingTaskId === task.id">Verificando...</span>
+                                        </button>
+                                    </template>
+
+                                    <template x-if="task.status === 'running'">
+                                        <div class="flex space-x-1.5">
+                                            <button @click="pauseTask(task.id)" class="px-3 py-1.5 rounded-lg text-xs font-semibold text-gray-800 dark:text-gray-200 bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 transition btn-press flex items-center space-x-1">
+                                                <i data-lucide="pause" class="w-3.5 h-3.5"></i>
+                                                <span>Pausar</span>
+                                            </button>
+                                            <button @click="cancelTask(task.id)" class="px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-red-800 hover:bg-red-900 transition btn-press flex items-center space-x-1">
+                                                <i data-lucide="square" class="w-3.5 h-3.5"></i>
+                                                <span>Cancelar</span>
+                                            </button>
+                                        </div>
+                                    </template>
+
+                                    <template x-if="task.status === 'paused'">
+                                        <div class="flex space-x-1.5">
+                                            <button @click="resumeTask(task.id)" class="px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 transition btn-press flex items-center space-x-1">
+                                                <i data-lucide="play" class="w-3.5 h-3.5"></i>
+                                                <span>Retomar</span>
+                                            </button>
+                                            <button @click="cancelTask(task.id)" class="px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-red-800 hover:bg-red-900 transition btn-press flex items-center space-x-1">
+                                                <i data-lucide="square" class="w-3.5 h-3.5"></i>
+                                                <span>Cancelar</span>
+                                            </button>
+                                        </div>
+                                    </template>
+                                </div>
+
+                                <!-- Right Controls: Logs Toggle, Edit, Duplicate, Delete -->
+                                <div class="flex items-center space-x-1">
+                                    <!-- Mini Logs Toggle -->
+                                    <button @click="toggleTaskLogs(task.id)" class="p-1.5 rounded-lg text-xs transition btn-press text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800" title="Ver logs em tempo real">
+                                        <i data-lucide="terminal" class="w-4 h-4"></i>
+                                    </button>
+
+                                    <!-- Edit Task (Allowed if not running) -->
+                                    <button x-show="task.status !== 'running'" @click="editTask(task)" class="p-1.5 rounded-lg text-xs transition btn-press text-gray-500 hover:text-rose-600 dark:text-gray-400 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40" title="Editar tarefa">
+                                        <i data-lucide="pencil" class="w-4 h-4"></i>
+                                    </button>
+
+                                    <!-- Duplicate Task -->
+                                    <button @click="duplicateTask(task)" class="p-1.5 rounded-lg text-xs transition btn-press text-gray-500 hover:text-rose-600 dark:text-gray-400 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40" title="Duplicar configurações">
+                                        <i data-lucide="copy" class="w-4 h-4"></i>
+                                    </button>
+
+                                    <!-- Delete Task -->
+                                    <button @click="promptDeleteTask(task)" class="p-1.5 text-gray-400 hover:text-red-500 dark:hover:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/40 transition btn-press" title="Excluir tarefa">
+                                        <i data-lucide="trash-2" class="w-4 h-4"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </section>
+
+            <!-- TAB 2: STEP-BY-STEP TASK WIZARD WITH SLIDE-RIGHT TRANSITION -->
+            <section x-show="activeTab === 'new-task'" 
+                     x-transition:enter="transition transform ease-out duration-300"
+                     x-transition:enter-start="opacity-0 translate-x-10"
+                     x-transition:enter-end="opacity-100 translate-x-0"
+                     x-transition:leave="transition ease-in duration-100"
+                     x-transition:leave-start="opacity-100"
+                     x-transition:leave-end="opacity-0"
+                     class="glass-panel rounded-3xl p-6 sm:p-8 space-y-6 max-w-4xl mx-auto shadow-md">
+                <!-- Wizard Header & Title -->
+                <div class="border-b border-gray-200 dark:border-gray-800 pb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div>
+                        <h3 class="text-xl font-bold tracking-tight text-gray-900 dark:text-white" x-text="isEditingTask ? 'Editar Tarefa' : 'Assistente de Criação de Tarefa'"></h3>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5" x-text="isEditingTask ? 'Atualize as configurações da tarefa selecionada.' : 'Siga os 4 passos para configurar e iniciar sua clonagem.'"></p>
+                    </div>
+                    <button type="button" @click="activeTab = 'tasks'" class="self-start sm:self-center text-xs text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 flex items-center space-x-1">
+                        <i data-lucide="x" class="w-3.5 h-3.5"></i>
+                        <span>Cancelar e Voltar</span>
+                    </button>
+                </div>
+
+                <!-- Stepper Progress Indicator -->
+                <div class="grid grid-cols-4 gap-2 text-xs font-semibold text-center border-b border-gray-200 dark:border-gray-800 pb-4">
+                    <div @click="goToWizardStep(1)" class="cursor-pointer space-y-1 transition"
+                         :class="wizardStep === 1 ? 'text-rose-600 dark:text-rose-400' : (wizardStep > 1 ? 'text-gray-700 dark:text-gray-300' : 'text-gray-400')">
+                        <div class="h-1.5 rounded-full" :class="wizardStep === 1 ? 'bg-rose-500' : (wizardStep > 1 ? 'bg-rose-500/40' : 'bg-gray-200 dark:bg-gray-800')"></div>
+                        <span>1. Objetivo</span>
+                    </div>
+                    <div @click="goToWizardStep(2)" class="cursor-pointer space-y-1 transition"
+                         :class="wizardStep === 2 ? 'text-rose-600 dark:text-rose-400' : (wizardStep > 2 ? 'text-gray-700 dark:text-gray-300' : 'text-gray-400')">
+                        <div class="h-1.5 rounded-full" :class="wizardStep === 2 ? 'bg-rose-500' : (wizardStep > 2 ? 'bg-rose-500/40' : 'bg-gray-200 dark:bg-gray-800')"></div>
+                        <span>2. Canais</span>
+                    </div>
+                    <div @click="goToWizardStep(3)" class="cursor-pointer space-y-1 transition"
+                         :class="wizardStep === 3 ? 'text-rose-600 dark:text-rose-400' : (wizardStep > 3 ? 'text-gray-700 dark:text-gray-300' : 'text-gray-400')">
+                        <div class="h-1.5 rounded-full" :class="wizardStep === 3 ? 'bg-rose-500' : (wizardStep > 3 ? 'bg-rose-500/40' : 'bg-gray-200 dark:bg-gray-800')"></div>
+                        <span>3. Conteúdo</span>
+                    </div>
+                    <div @click="goToWizardStep(4)" class="cursor-pointer space-y-1 transition"
+                         :class="wizardStep === 4 ? 'text-rose-600 dark:text-rose-400' : 'text-gray-400'">
+                        <div class="h-1.5 rounded-full" :class="wizardStep === 4 ? 'bg-rose-500' : 'bg-gray-200 dark:bg-gray-800')"></div>
+                        <span>4. Revisão</span>
+                    </div>
+                </div>
+
+                <!-- STEP 1: OBJETIVO & MODO -->
+                <div x-show="wizardStep === 1" 
+                     x-transition:enter="transition transform ease-out duration-250"
+                     x-transition:enter-start="opacity-0 translate-x-8"
+                     x-transition:enter-end="opacity-100 translate-x-0"
+                     class="space-y-5">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5">Nome da Tarefa</label>
+                        <input type="text" x-model="taskForm.name" required class="w-full px-4 py-2.5 rounded-xl border border-gray-300 dark:border-gray-700 bg-white/70 dark:bg-gray-900/70 text-sm focus:ring-2 focus:ring-rose-500 outline-none transition" placeholder="Ex: Backup VIP Canal de Notícias">
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2">Como você deseja clonar?</label>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <!-- Mode Card 1: Historical -->
+                            <div @click="taskForm.mode = 'historical'" class="cursor-pointer rounded-2xl p-5 border-2 transition-all space-y-2 btn-press"
+                                 :class="taskForm.mode === 'historical' ? 'border-rose-500 bg-rose-500/10 shadow-sm' : 'border-gray-200 dark:border-gray-800 hover:border-gray-300 dark:hover:border-gray-700 bg-white/40 dark:bg-gray-900/30'">
+                                <div class="flex items-center justify-between">
+                                    <div class="w-9 h-9 rounded-xl bg-rose-500/20 text-rose-500 flex items-center justify-center">
+                                        <i data-lucide="library" class="w-5 h-5"></i>
+                                    </div>
+                                    <span class="w-4 h-4 rounded-full border flex items-center justify-center" :class="taskForm.mode === 'historical' ? 'border-rose-500 bg-rose-500' : 'border-gray-400'">
+                                        <span class="w-1.5 h-1.5 rounded-full bg-white" x-show="taskForm.mode === 'historical'"></span>
+                                    </span>
+                                </div>
+                                <h4 class="font-bold text-sm text-gray-900 dark:text-white">Modo Histórico (Lote)</h4>
+                                <p class="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
+                                    Copia mensagens do passado da mais antiga para a mais recente. Ideal para backup completo, migração de canais ou clonar acervos.
+                                </p>
+                            </div>
+
+                            <!-- Mode Card 2: Live Sync -->
+                            <div @click="taskForm.mode = 'live_sync'" class="cursor-pointer rounded-2xl p-5 border-2 transition-all space-y-2 btn-press"
+                                 :class="taskForm.mode === 'live_sync' ? 'border-rose-500 bg-rose-500/10 shadow-sm' : 'border-gray-200 dark:border-gray-800 hover:border-gray-300 dark:hover:border-gray-700 bg-white/40 dark:bg-gray-900/30'">
+                                <div class="flex items-center justify-between">
+                                    <div class="w-9 h-9 rounded-xl bg-rose-500/20 text-rose-500 flex items-center justify-center">
+                                        <i data-lucide="zap" class="w-5 h-5"></i>
+                                    </div>
+                                    <span class="w-4 h-4 rounded-full border flex items-center justify-center" :class="taskForm.mode === 'live_sync' ? 'border-rose-500 bg-rose-500' : 'border-gray-400'">
+                                        <span class="w-1.5 h-1.5 rounded-full bg-white" x-show="taskForm.mode === 'live_sync'"></span>
+                                    </span>
+                                </div>
+                                <h4 class="font-bold text-sm text-gray-900 dark:text-white">Modo Tempo Real (Live)</h4>
+                                <p class="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
+                                    Fica escutando o canal de origem e reenvia instantaneamente cada nova mensagem postada para o destino.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- STEP 2: ORIGEM & DESTINO -->
+                <div x-show="wizardStep === 2" 
+                     x-transition:enter="transition transform ease-out duration-250"
+                     x-transition:enter-start="opacity-0 translate-x-8"
+                     x-transition:enter-end="opacity-100 translate-x-0"
+                     class="space-y-6">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <!-- Origin Chat Picker -->
+                        <div class="space-y-2">
+                            <div class="flex justify-between items-center">
+                                <label class="text-xs font-semibold text-gray-700 dark:text-gray-300 flex items-center space-x-1.5">
+                                    <i data-lucide="download" class="w-3.5 h-3.5 text-rose-500"></i>
+                                    <span>Canal de Origem (De onde copiar)</span>
+                                </label>
+                                <div class="flex items-center space-x-2">
+                                    <button type="button" @click="fetchDialogs()" :disabled="loadingDialogs" class="text-[11px] text-gray-500 hover:text-rose-500 flex items-center space-x-1" title="Atualizar canais">
+                                        <i data-lucide="refresh-cw" class="w-3 h-3" :class="loadingDialogs ? 'animate-spin' : ''"></i>
+                                        <span>Atualizar</span>
+                                    </button>
+                                    <button type="button" @click="manualOriginInput = !manualOriginInput" class="text-[11px] text-rose-500 hover:underline">
+                                        <span x-text="manualOriginInput ? 'Escolher da Lista' : 'Inserir ID Manual'"></span>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- If Visual Picker -->
+                            <div x-show="!manualOriginInput" class="space-y-2">
+                                <input type="text" x-model="dialogsSearchOrigin" placeholder="Filtrar meus canais/grupos..." class="w-full px-3 py-1.5 rounded-xl border border-gray-200 dark:border-gray-800 bg-white/50 dark:bg-gray-900/50 text-xs outline-none focus:ring-1 focus:ring-rose-500">
+                                <div class="h-44 overflow-y-auto picker-scroll rounded-xl border border-gray-200 dark:border-gray-800 p-1.5 space-y-1 bg-white/30 dark:bg-gray-900/30">
+                                    <template x-for="d in getFilteredDialogs(dialogsSearchOrigin)" :key="d.id">
+                                        <div @click="selectOriginDialog(d)" class="p-2 rounded-lg cursor-pointer transition flex items-center justify-between text-xs"
+                                             :class="String(taskForm.origin_chat) === String(d.id) ? 'bg-rose-600 text-white font-semibold' : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-800 dark:text-gray-200'">
+                                            <div class="truncate mr-2">
+                                                <span x-text="d.title"></span>
+                                                <span class="text-[10px] opacity-75 block" x-text="`${d.type} · ID: ${d.id}`"></span>
+                                            </div>
+                                            <i data-lucide="check" class="w-4 h-4 text-white" x-show="String(taskForm.origin_chat) === String(d.id)"></i>
+                                        </div>
+                                    </template>
+                                    <div x-show="loadingDialogs" class="text-center py-6 text-xs text-rose-500 flex items-center justify-center space-x-1.5">
+                                        <i data-lucide="refresh-cw" class="w-3.5 h-3.5 animate-spin"></i>
+                                        <span>Buscando canais da sua conta...</span>
+                                    </div>
+                                    <div x-show="!loadingDialogs && dialogs.length === 0" class="text-center py-6 text-xs text-gray-400">
+                                        Nenhum canal carregado. Conecte sua conta ou digite o ID manualmente.
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- If Manual Input -->
+                            <div x-show="manualOriginInput" class="space-y-1.5">
+                                <input type="text" x-model="taskForm.origin_chat" @blur="checkOriginChat()" placeholder="Ex: -1001234567890 ou @canal_origem" class="w-full px-3 py-2 rounded-xl border border-gray-300 dark:border-gray-700 bg-white/70 dark:bg-gray-900/70 text-xs outline-none focus:ring-1 focus:ring-rose-500">
+                                <div class="text-[11px] flex items-center space-x-1">
+                                    <span x-show="taskOriginCheck.loading" class="text-gray-400">Validando canal...</span>
+                                    <i data-lucide="check" class="w-3.5 h-3.5 text-rose-500" x-show="taskOriginCheck.title"></i>
+                                    <span x-show="taskOriginCheck.title" class="text-rose-500 font-medium" x-text="taskOriginCheck.title"></span>
+                                    <span x-show="taskOriginCheck.error" class="text-red-500" x-text="taskOriginCheck.error"></span>
+                                </div>
+                            </div>
+
+                            <!-- Selected Origin Feedback -->
+                            <div class="p-2.5 rounded-xl bg-gray-100/70 dark:bg-gray-900/50 text-xs flex items-center justify-between">
+                                <span class="text-gray-500 dark:text-gray-400">Origem:</span>
+                                <span class="font-bold text-gray-900 dark:text-white truncate max-w-[200px]" x-text="getOriginDisplayName()"></span>
+                            </div>
+                        </div>
+
+                        <!-- Destination Chat Picker -->
+                        <div class="space-y-2">
+                            <div class="flex justify-between items-center">
+                                <label class="text-xs font-semibold text-gray-700 dark:text-gray-300 flex items-center space-x-1.5">
+                                    <i data-lucide="upload" class="w-3.5 h-3.5 text-rose-500"></i>
+                                    <span>Canal de Destino (Para onde enviar)</span>
+                                </label>
+                                <div class="flex items-center space-x-2">
+                                    <button type="button" @click="fetchDialogs()" :disabled="loadingDialogs" class="text-[11px] text-gray-500 hover:text-rose-500 flex items-center space-x-1" title="Atualizar canais">
+                                        <i data-lucide="refresh-cw" class="w-3 h-3" :class="loadingDialogs ? 'animate-spin' : ''"></i>
+                                        <span>Atualizar</span>
+                                    </button>
+                                    <button type="button" @click="manualDestInput = !manualDestInput" class="text-[11px] text-rose-500 hover:underline">
+                                        <span x-text="manualDestInput ? 'Escolher da Lista' : 'Inserir ID Manual'"></span>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- If Visual Picker -->
+                            <div x-show="!manualDestInput" class="space-y-2">
+                                <input type="text" x-model="dialogsSearchDest" placeholder="Filtrar meus canais/grupos..." class="w-full px-3 py-1.5 rounded-xl border border-gray-200 dark:border-gray-800 bg-white/50 dark:bg-gray-900/50 text-xs outline-none focus:ring-1 focus:ring-rose-500">
+                                <div class="h-44 overflow-y-auto picker-scroll rounded-xl border border-gray-200 dark:border-gray-800 p-1.5 space-y-1 bg-white/30 dark:bg-gray-900/30">
+                                    <template x-for="d in getFilteredDialogs(dialogsSearchDest)" :key="d.id">
+                                        <div @click="selectDestDialog(d)" class="p-2 rounded-lg cursor-pointer transition flex items-center justify-between text-xs"
+                                             :class="String(taskForm.dest_chat) === String(d.id) ? 'bg-rose-600 text-white font-semibold' : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-800 dark:text-gray-200'">
+                                            <div class="truncate mr-2">
+                                                <span x-text="d.title"></span>
+                                                <span class="text-[10px] opacity-75 block" x-text="`${d.type} · ID: ${d.id}`"></span>
+                                            </div>
+                                            <i data-lucide="check" class="w-4 h-4 text-white" x-show="String(taskForm.dest_chat) === String(d.id)"></i>
+                                        </div>
+                                    </template>
+                                    <div x-show="loadingDialogs" class="text-center py-6 text-xs text-rose-500 flex items-center justify-center space-x-1.5">
+                                        <i data-lucide="refresh-cw" class="w-3.5 h-3.5 animate-spin"></i>
+                                        <span>Buscando canais da sua conta...</span>
+                                    </div>
+                                    <div x-show="!loadingDialogs && dialogs.length === 0" class="text-center py-6 text-xs text-gray-400">
+                                        Nenhum canal carregado. Conecte sua conta ou digite o ID manualmente.
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- If Manual Input -->
+                            <div x-show="manualDestInput" class="space-y-1.5">
+                                <input type="text" x-model="taskForm.dest_chat" @blur="checkDestChat()" placeholder="Ex: -1009876543210 ou @meu_novo_canal" class="w-full px-3 py-2 rounded-xl border border-gray-300 dark:border-gray-700 bg-white/70 dark:bg-gray-900/70 text-xs outline-none focus:ring-1 focus:ring-rose-500">
+                                <div class="text-[11px] flex items-center space-x-1">
+                                    <span x-show="taskDestCheck.loading" class="text-gray-400">Validando canal...</span>
+                                    <i data-lucide="check" class="w-3.5 h-3.5 text-rose-500" x-show="taskDestCheck.title"></i>
+                                    <span x-show="taskDestCheck.title" class="text-rose-500 font-medium" x-text="taskDestCheck.title"></span>
+                                    <span x-show="taskDestCheck.error" class="text-red-500" x-text="taskDestCheck.error"></span>
+                                </div>
+                            </div>
+
+                            <!-- Selected Destination Feedback -->
+                            <div class="p-2.5 rounded-xl bg-gray-100/70 dark:bg-gray-900/50 text-xs flex items-center justify-between">
+                                <span class="text-gray-500 dark:text-gray-400">Destino:</span>
+                                <span class="font-bold text-gray-900 dark:text-white truncate max-w-[200px]" x-text="getDestDisplayName()"></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- STEP 3: CONTEÚDO, LIMPEZA & VELOCIDADE -->
+                <div x-show="wizardStep === 3" 
+                     x-transition:enter="transition transform ease-out duration-250"
+                     x-transition:enter-start="opacity-0 translate-x-8"
+                     x-transition:enter-end="opacity-100 translate-x-0"
+                     class="space-y-6">
+                    <!-- Media Type Presets -->
+                    <div class="space-y-2">
+                        <label class="block text-xs font-semibold text-gray-700 dark:text-gray-300">O que você deseja copiar?</label>
+                        <div class="grid grid-cols-3 gap-2">
+                            <button type="button" @click="applyMediaPreset('all')" class="p-3 rounded-xl border text-xs font-semibold transition btn-press flex flex-col items-center space-y-1 text-center"
+                                    :class="mediaPreset === 'all' ? 'border-rose-500 bg-rose-500/10 text-rose-600 dark:text-rose-400' : 'border-gray-200 dark:border-gray-800 text-gray-600 dark:text-gray-400'">
+                                <i data-lucide="sparkles" class="w-5 h-5"></i>
+                                <span>Tudo Completo</span>
+                                <span class="text-[10px] font-normal opacity-75">Mídias + Textos</span>
+                            </button>
+                            <button type="button" @click="applyMediaPreset('media_only')" class="p-3 rounded-xl border text-xs font-semibold transition btn-press flex flex-col items-center space-y-1 text-center"
+                                    :class="mediaPreset === 'media_only' ? 'border-rose-500 bg-rose-500/10 text-rose-600 dark:text-rose-400' : 'border-gray-200 dark:border-gray-800 text-gray-600 dark:text-gray-400'">
+                                <i data-lucide="camera" class="w-5 h-5"></i>
+                                <span>Apenas Mídias</span>
+                                <span class="text-[10px] font-normal opacity-75">Fotos, Vídeos, Docs</span>
+                            </button>
+                            <button type="button" @click="applyMediaPreset('text_only')" class="p-3 rounded-xl border text-xs font-semibold transition btn-press flex flex-col items-center space-y-1 text-center"
+                                    :class="mediaPreset === 'text_only' ? 'border-rose-500 bg-rose-500/10 text-rose-600 dark:text-rose-400' : 'border-gray-200 dark:border-gray-800 text-gray-600 dark:text-gray-400'">
+                                <i data-lucide="message-square" class="w-5 h-5"></i>
+                                <span>Apenas Textos</span>
+                                <span class="text-[10px] font-normal opacity-75">Mensagens de texto</span>
+                            </button>
+                        </div>
+
+                        <!-- Individual Media Pills -->
+                        <div class="pt-2 flex flex-wrap gap-2">
+                            <button type="button" @click="toggleMediaType('photo')" class="px-3 py-1 rounded-full text-xs border transition" :class="isMediaTypeSelected('photo') ? 'bg-rose-600 text-white border-rose-600' : 'bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400'">Fotos</button>
+                            <button type="button" @click="toggleMediaType('video')" class="px-3 py-1 rounded-full text-xs border transition" :class="isMediaTypeSelected('video') ? 'bg-rose-600 text-white border-rose-600' : 'bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400'">Vídeos</button>
+                            <button type="button" @click="toggleMediaType('document')" class="px-3 py-1 rounded-full text-xs border transition" :class="isMediaTypeSelected('document') ? 'bg-rose-600 text-white border-rose-600' : 'bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400'">Documentos</button>
+                            <button type="button" @click="toggleMediaType('text')" class="px-3 py-1 rounded-full text-xs border transition" :class="isMediaTypeSelected('text') ? 'bg-rose-600 text-white border-rose-600' : 'bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400'">Textos</button>
+                            <button type="button" @click="toggleMediaType('audio')" class="px-3 py-1 rounded-full text-xs border transition" :class="isMediaTypeSelected('audio') ? 'bg-rose-600 text-white border-rose-600' : 'bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400'">Músicas</button>
+                            <button type="button" @click="toggleMediaType('voice')" class="px-3 py-1 rounded-full text-xs border transition" :class="isMediaTypeSelected('voice') ? 'bg-rose-600 text-white border-rose-600' : 'bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400'">Voz</button>
+                            <button type="button" @click="toggleMediaType('animation')" class="px-3 py-1 rounded-full text-xs border transition" :class="isMediaTypeSelected('animation') ? 'bg-rose-600 text-white border-rose-600' : 'bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400'">GIFs</button>
+                            <button type="button" @click="toggleMediaType('poll')" class="px-3 py-1 rounded-full text-xs border transition" :class="isMediaTypeSelected('poll') ? 'bg-rose-600 text-white border-rose-600' : 'bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400'">Enquetes</button>
+                        </div>
+                    </div>
+
+                    <!-- Clean Re-sending & Cleansing Toggles -->
+                    <div class="space-y-2">
+                        <label class="block text-xs font-semibold text-gray-700 dark:text-gray-300">Regras de Limpeza Automática</label>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                            <label class="flex items-center space-x-2.5 p-3 rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-900/30 cursor-pointer">
+                                <input type="checkbox" x-model="taskForm.clean_forward" class="rounded text-rose-600 focus:ring-rose-500 w-4 h-4">
+                                <span class="text-xs font-medium">Reenvio Limpo (sem 'Encaminhado')</span>
+                            </label>
+
+                            <label class="flex items-center space-x-2.5 p-3 rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-900/30 cursor-pointer">
+                                <input type="checkbox" x-model="taskForm.remove_captions" class="rounded text-rose-600 focus:ring-rose-500 w-4 h-4">
+                                <span class="text-xs font-medium">Remover Legendas / Textos</span>
+                            </label>
+
+                            <label class="flex items-center space-x-2.5 p-3 rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-900/30 cursor-pointer">
+                                <input type="checkbox" x-model="taskForm.remove_links" class="rounded text-rose-600 focus:ring-rose-500 w-4 h-4">
+                                <span class="text-xs font-medium">Remover Links HTTP/t.me</span>
+                            </label>
+
+                            <label class="flex items-center space-x-2.5 p-3 rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-900/30 cursor-pointer">
+                                <input type="checkbox" x-model="taskForm.remove_mentions" class="rounded text-rose-600 focus:ring-rose-500 w-4 h-4">
+                                <span class="text-xs font-medium">Remover Menções (@canal)</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Speed / Delay Presets -->
+                    <div class="space-y-2">
+                        <label class="block text-xs font-semibold text-gray-700 dark:text-gray-300">Velocidade de Clonagem (Intervalo)</label>
+                        <div class="grid grid-cols-3 gap-2">
+                            <button type="button" @click="applyDelayPreset('slow')" class="p-2.5 rounded-xl border text-xs font-medium transition text-center"
+                                    :class="delayPreset === 'slow' ? 'border-rose-500 bg-rose-500/10 text-rose-600 dark:text-rose-400 font-semibold' : 'border-gray-200 dark:border-gray-800 text-gray-600 dark:text-gray-400'">
+                                <span>Seguro (20s)</span>
+                            </button>
+                            <button type="button" @click="applyDelayPreset('normal')" class="p-2.5 rounded-xl border text-xs font-medium transition text-center"
+                                    :class="delayPreset === 'normal' ? 'border-rose-500 bg-rose-500/10 text-rose-600 dark:text-rose-400 font-semibold' : 'border-gray-200 dark:border-gray-800 text-gray-600 dark:text-gray-400'">
+                                <span>Normal (10s)</span>
+                            </button>
+                            <button type="button" @click="applyDelayPreset('fast')" class="p-2.5 rounded-xl border text-xs font-medium transition text-center"
+                                    :class="delayPreset === 'fast' ? 'border-rose-500 bg-rose-500/10 text-rose-600 dark:text-rose-400 font-semibold' : 'border-gray-200 dark:border-gray-800 text-gray-600 dark:text-gray-400'">
+                                <span>Rápido (3s)</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Collapsible Advanced Options -->
+                    <div class="pt-2 border-t border-gray-200 dark:border-gray-800">
+                        <button type="button" @click="showAdvancedOptions = !showAdvancedOptions" class="text-xs font-semibold text-rose-500 hover:underline flex items-center space-x-1">
+                            <i data-lucide="chevron-down" class="w-3.5 h-3.5 transition-transform duration-200" :class="showAdvancedOptions ? 'rotate-180' : ''"></i>
+                            <span x-text="showAdvancedOptions ? 'Ocultar Opções Avançadas' : 'Opções Avançadas (Range, Assinaturas, Delays finos)'"></span>
+                        </button>
+
+                        <div x-show="showAdvancedOptions" x-collapse class="mt-4 space-y-4 p-4 rounded-2xl bg-gray-100/50 dark:bg-gray-900/40 border border-gray-200/60 dark:border-gray-800/60">
+                            <!-- Range of messages if historical -->
+                            <div x-show="taskForm.mode === 'historical'" class="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label class="block text-[11px] font-semibold text-gray-600 dark:text-gray-400 mb-1">Mensagem Inicial (ID)</label>
+                                    <input type="number" min="1" x-model="taskForm.start_message_id" class="w-full px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-xs outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-[11px] font-semibold text-gray-600 dark:text-gray-400 mb-1">Mensagem Final (ID Opcional)</label>
+                                    <input type="number" min="1" x-model="taskForm.end_message_id" class="w-full px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-xs outline-none" placeholder="Última postada">
+                                </div>
+                            </div>
+
+                            <!-- Header & Footer -->
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                <div>
+                                    <label class="block text-[11px] font-semibold text-gray-600 dark:text-gray-400 mb-1">Cabeçalho (Topo de cada post)</label>
+                                    <input type="text" x-model="taskForm.header_text" class="w-full px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-xs outline-none" placeholder="Ex: Postagem Exclusiva">
+                                </div>
+                                <div>
+                                    <label class="block text-[11px] font-semibold text-gray-600 dark:text-gray-400 mb-1">Rodapé / Assinatura (Fim)</label>
+                                    <input type="text" x-model="taskForm.footer_text" class="w-full px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-xs outline-none" placeholder="Ex: Entre no canal: https://t.me/meucanal">
+                                </div>
+                            </div>
+
+                            <!-- Fine-tuning delays -->
+                            <div class="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label class="block text-[11px] font-semibold text-gray-600 dark:text-gray-400 mb-1">Delay exato entre mensagens (s)</label>
+                                    <input type="number" step="0.5" min="0" x-model="taskForm.delay_seconds" class="w-full px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-xs outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-[11px] font-semibold text-gray-600 dark:text-gray-400 mb-1">Delay ao pular ignorada (s)</label>
+                                    <input type="number" step="0.1" min="0" x-model="taskForm.skip_delay_seconds" class="w-full px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-xs outline-none">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- STEP 4: REVISÃO & CONFIRMAÇÃO -->
+                <div x-show="wizardStep === 4" 
+                     x-transition:enter="transition transform ease-out duration-250"
+                     x-transition:enter-start="opacity-0 translate-x-8"
+                     x-transition:enter-end="opacity-100 translate-x-0"
+                     class="space-y-5">
+                    <!-- Human-Readable Summary Card -->
+                    <div class="rounded-2xl p-6 bg-gradient-to-tr from-rose-500/10 via-red-500/5 to-transparent border border-rose-500/20 space-y-4">
+                        <div class="flex items-center space-x-2">
+                            <i data-lucide="file-check" class="w-5 h-5 text-rose-500"></i>
+                            <h4 class="font-bold text-sm text-gray-900 dark:text-white">Resumo da Configuração</h4>
+                        </div>
+
+                        <p class="text-xs text-gray-700 dark:text-gray-300 leading-relaxed font-medium" x-text="getTaskSummaryText()"></p>
+
+                        <!-- Breakdown Details Grid -->
+                        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-3 border-t border-gray-200 dark:border-gray-800 text-xs">
+                            <div>
+                                <span class="text-gray-400 block text-[10px]">Nome</span>
+                                <span class="font-semibold text-gray-900 dark:text-white truncate block" x-text="taskForm.name"></span>
+                            </div>
+                            <div>
+                                <span class="text-gray-400 block text-[10px]">Modo</span>
+                                <span class="font-semibold text-gray-900 dark:text-white" x-text="taskForm.mode === 'historical' ? 'Histórico (Lote)' : 'Tempo Real (Live)'"></span>
+                            </div>
+                            <div>
+                                <span class="text-gray-400 block text-[10px]">Reenvio Limpo</span>
+                                <span class="font-semibold text-gray-900 dark:text-white" x-text="taskForm.clean_forward ? 'Sim (Sem cabeçalho)' : 'Não'"></span>
+                            </div>
+                            <div>
+                                <span class="text-gray-400 block text-[10px]">Intervalo</span>
+                                <span class="font-semibold text-gray-900 dark:text-white" x-text="`${taskForm.delay_seconds}s por mensagem`"></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Auto-start Toggle on Create (only if creating new) -->
+                    <div x-show="!isEditingTask" class="p-3 rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-900/30">
+                        <label class="flex items-center space-x-2.5 cursor-pointer">
+                            <input type="checkbox" x-model="autoStartOnCreate" class="rounded text-rose-600 focus:ring-rose-500 w-4 h-4">
+                            <span class="text-xs font-semibold text-gray-800 dark:text-gray-200">Iniciar a tarefa imediatamente após salvar</span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Wizard Navigation Footer -->
+                <div class="flex items-center justify-between pt-4 border-t border-gray-200 dark:border-gray-800">
+                    <button type="button" @click="prevWizardStep()" x-show="wizardStep > 1" class="px-5 py-2.5 rounded-xl text-xs font-semibold text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition btn-press flex items-center space-x-1">
+                        <i data-lucide="arrow-left" class="w-3.5 h-3.5"></i>
+                        <span>Voltar</span>
+                    </button>
+                    <div x-show="wizardStep === 1"></div>
+
+                    <div class="flex items-center space-x-2">
+                        <button type="button" @click="nextWizardStep()" x-show="wizardStep < 4" class="px-6 py-2.5 rounded-xl text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 shadow-md shadow-rose-600/25 transition btn-press flex items-center space-x-1">
+                            <span>Avançar</span>
+                            <i data-lucide="arrow-right" class="w-3.5 h-3.5"></i>
+                        </button>
+
+                        <button type="button" @click="submitTaskForm()" x-show="wizardStep === 4" class="px-6 py-2.5 rounded-xl text-xs font-semibold text-white bg-gradient-to-r from-rose-600 to-red-700 hover:from-rose-700 hover:to-red-800 shadow-md shadow-rose-600/25 transition btn-press flex items-center space-x-1">
+                            <i data-lucide="check" class="w-3.5 h-3.5"></i>
+                            <span x-text="isEditingTask ? 'Salvar Alterações' : 'Confirmar e Criar Tarefa'"></span>
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- TAB: MEUS GRUPOS GERENCIADOS -->
+            <section x-show="activeTab === 'groups'" 
+                     x-transition:enter="transition transform ease-out duration-300"
+                     x-transition:enter-start="opacity-0 translate-x-10"
+                     x-transition:enter-end="opacity-100 translate-x-0"
+                     x-transition:leave="transition ease-in duration-100"
+                     x-transition:leave-start="opacity-100"
+                     x-transition:leave-end="opacity-0"
+                     class="space-y-5">
+
+                <!-- Groups Header & Actions Bar -->
+                <div class="glass-panel p-6 rounded-3xl space-y-4 shadow-sm">
+                    <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                        <div>
+                            <div class="flex items-center space-x-2">
+                                <h3 class="text-xl font-bold tracking-tight text-gray-900 dark:text-white">Meus Grupos & Canais</h3>
+                                <span class="text-xs px-2.5 py-0.5 rounded-full bg-rose-500/10 text-rose-600 dark:text-rose-400 font-semibold border border-rose-500/20" x-text="`${managedGroups.length} cadastrados`"></span>
+                            </div>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Canais e grupos autorizados como destino para disparo de postagens e relatórios de entrega.</p>
+                        </div>
+
+                        <div class="flex items-center space-x-2">
+                            <button @click="openImportGroupsModal()" class="px-4 py-2 rounded-xl text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 shadow-md shadow-rose-600/25 transition btn-press flex items-center space-x-1.5">
+                                <i data-lucide="download" class="w-3.5 h-3.5"></i>
+                                <span>Importar Diálogos</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Search Input -->
+                    <div class="relative" x-show="managedGroups.length > 0">
+                        <input type="text" x-model="groupsSearch" placeholder="Buscar grupo por título ou chat ID..." class="w-full pl-9 pr-3 py-2 rounded-xl border border-gray-200 dark:border-gray-800 bg-white/70 dark:bg-gray-900/70 text-xs focus:ring-2 focus:ring-rose-500 outline-none transition">
+                        <i data-lucide="search" class="w-4 h-4 absolute left-3 top-2.5 text-gray-400"></i>
+                    </div>
+                </div>
+
+                <!-- Empty State -->
+                <div x-show="managedGroups.length === 0" class="glass-panel rounded-3xl p-12 text-center space-y-4">
+                    <div class="w-16 h-16 rounded-full bg-rose-500/10 text-rose-500 mx-auto flex items-center justify-center">
+                        <i data-lucide="users" class="w-8 h-8"></i>
+                    </div>
+                    <h3 class="text-lg font-semibold text-gray-900 dark:text-white">Nenhum grupo cadastrado</h3>
+                    <p class="text-sm text-gray-500 dark:text-gray-400 max-w-md mx-auto">
+                        Importe facilmente os grupos e canais onde sua conta ou bot possui permissões de envio para publicar em lote.
+                    </p>
+                    <div>
+                        <button @click="openImportGroupsModal()" class="px-5 py-2.5 rounded-xl text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 transition btn-press shadow-md shadow-rose-600/20 flex items-center space-x-1.5 mx-auto">
+                            <i data-lucide="download" class="w-4 h-4"></i>
+                            <span>Importar Diálogos do Telegram</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Groups Cards Grid -->
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" x-show="managedGroups.length > 0">
+                    <template x-for="group in filteredManagedGroups" :key="group.id">
+                        <div class="glass-panel rounded-2xl p-4.5 space-y-3 relative border border-gray-200/60 dark:border-gray-800/60 hover:border-rose-500/30 transition shadow-sm flex flex-col justify-between card-hover">
+                            <div class="space-y-2">
+                                <div class="flex items-start justify-between gap-2">
+                                    <div class="truncate">
+                                        <h4 class="font-bold text-sm text-gray-900 dark:text-white truncate" x-text="group.title"></h4>
+                                        <p class="text-[11px] text-gray-400 font-mono mt-0.5 truncate" x-text="group.username ? '@' + group.username : group.chat_id"></p>
+                                    </div>
+                                    <span class="px-2 py-0.5 text-[10px] font-bold rounded-full uppercase flex-shrink-0"
+                                          :class="group.chat_type === 'channel' ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/25' : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700'"
+                                          x-text="group.chat_type === 'channel' ? 'Canal' : (group.chat_type === 'supergroup' ? 'Supergrupo' : 'Grupo')">
+                                    </span>
+                                </div>
+                                
+                                <div class="flex items-center space-x-3 text-[11px] text-gray-500 dark:text-gray-400 pt-1">
+                                    <span class="flex items-center space-x-1">
+                                        <i data-lucide="shield-check" class="w-3.5 h-3.5 text-rose-500"></i>
+                                        <span>Permissão Ativa</span>
+                                    </span>
+                                </div>
+                            </div>
+
+                            <div class="pt-2 border-t border-gray-100 dark:border-gray-800/80 flex items-center justify-end">
+                                <button @click="removeManagedGroup(group.id)" class="px-2.5 py-1 rounded-lg text-xs text-red-500 hover:bg-red-500/10 transition btn-press flex items-center space-x-1">
+                                    <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                                    <span>Remover</span>
+                                </button>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </section>
+
+            <!-- TAB: PUBLICADOR & AGENDADOR -->
+            <section x-show="activeTab === 'publisher'" 
+                     x-transition:enter="transition transform ease-out duration-300"
+                     x-transition:enter-start="opacity-0 translate-x-10"
+                     x-transition:enter-end="opacity-100 translate-x-0"
+                     x-transition:leave="transition ease-in duration-100"
+                     x-transition:leave-start="opacity-100"
+                     x-transition:leave-end="opacity-0"
+                     class="space-y-5">
+
+                <!-- SUB-VIEW 1: POSTS LIST -->
+                <div x-show="publisherTab === 'list'" class="space-y-5">
+                    <!-- Top Action Bar -->
+                    <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+                        <!-- Filter Pills -->
+                        <div class="flex items-center space-x-1.5 bg-gray-100 dark:bg-gray-900/60 p-1 rounded-xl text-xs overflow-x-auto">
+                            <button @click="postFilter = 'all'" :class="postFilter === 'all' ? 'bg-white dark:bg-gray-800 shadow-sm text-gray-900 dark:text-white font-semibold' : 'text-gray-500 hover:text-gray-900 dark:hover:text-white'" class="px-3 py-1 rounded-lg transition btn-press whitespace-nowrap">
+                                Todas (<span x-text="posts.length"></span>)
+                            </button>
+                            <button @click="postFilter = 'scheduled'" :class="postFilter === 'scheduled' ? 'bg-white dark:bg-gray-800 shadow-sm text-rose-600 dark:text-rose-400 font-semibold' : 'text-gray-500 hover:text-gray-900 dark:hover:text-white'" class="px-3 py-1 rounded-lg transition btn-press whitespace-nowrap">
+                                Agendadas (<span x-text="posts.filter(p => p.status === 'scheduled').length"></span>)
+                            </button>
+                            <button @click="postFilter = 'published'" :class="postFilter === 'published' ? 'bg-white dark:bg-gray-800 shadow-sm text-gray-700 dark:text-gray-300 font-semibold' : 'text-gray-500 hover:text-gray-900 dark:hover:text-white'" class="px-3 py-1 rounded-lg transition btn-press whitespace-nowrap">
+                                Publicadas (<span x-text="posts.filter(p => p.status === 'published').length"></span>)
+                            </button>
+                            <button @click="postFilter = 'draft'" :class="postFilter === 'draft' ? 'bg-white dark:bg-gray-800 shadow-sm text-gray-700 dark:text-gray-300 font-semibold' : 'text-gray-500 hover:text-gray-900 dark:hover:text-white'" class="px-3 py-1 rounded-lg transition btn-press whitespace-nowrap">
+                                Rascunhos (<span x-text="posts.filter(p => p.status === 'draft').length"></span>)
+                            </button>
+                        </div>
+
+                        <!-- Search & New Post Button -->
+                        <div class="flex items-center space-x-2">
+                            <div class="relative flex-1 sm:w-60">
+                                <input type="text" x-model="postsSearch" placeholder="Buscar postagem..." class="w-full pl-9 pr-3 py-1.5 rounded-xl border border-gray-200 dark:border-gray-800 bg-white/70 dark:bg-gray-900/70 text-xs focus:ring-2 focus:ring-rose-500 outline-none transition">
+                                <i data-lucide="search" class="w-4 h-4 absolute left-2.5 top-2 text-gray-400"></i>
+                            </div>
+                            <button @click="openNewPostComposer()" class="px-3.5 py-1.5 rounded-xl text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 shadow-md shadow-rose-600/25 transition btn-press flex items-center space-x-1 whitespace-nowrap">
+                                <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+                                <span>Novo Post</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Empty state if no posts -->
+                    <div x-show="posts.length === 0" class="glass-panel rounded-3xl p-12 text-center space-y-4">
+                        <div class="w-16 h-16 rounded-full bg-rose-500/10 text-rose-500 mx-auto flex items-center justify-center">
+                            <i data-lucide="megaphone" class="w-8 h-8"></i>
+                        </div>
+                        <h3 class="text-lg font-semibold text-gray-900 dark:text-white">Nenhuma postagem criada</h3>
+                        <p class="text-sm text-gray-500 dark:text-gray-400 max-w-md mx-auto">
+                            Crie publicações com texto formatado e anexo de mídia para disparo imediato, agendado ou recorrente em múltiplos canais.
+                        </p>
+                        <div>
+                            <button @click="openNewPostComposer()" class="px-5 py-2.5 rounded-xl text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 transition btn-press shadow-md shadow-rose-600/20 flex items-center space-x-1.5 mx-auto">
+                                <i data-lucide="plus" class="w-4 h-4"></i>
+                                <span>Criar Primeira Postagem</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Posts Cards Grid -->
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4" x-show="posts.length > 0">
+                        <template x-for="post in filteredPosts" :key="post.id">
+                            <div class="glass-panel rounded-2xl p-5 space-y-4 relative border border-gray-200/60 dark:border-gray-800/60 hover:border-rose-500/30 transition shadow-sm flex flex-col justify-between card-hover">
+                                <div class="space-y-3">
+                                    <!-- Top Row: Name, Type & Status -->
+                                    <div class="flex items-start justify-between gap-2">
+                                        <div>
+                                            <div class="flex items-center space-x-2">
+                                                <h4 class="font-bold text-base tracking-tight text-gray-900 dark:text-white" x-text="post.name"></h4>
+                                                <span class="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase"
+                                                      :class="post.schedule_type === 'recurring' ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/25' : (post.schedule_type === 'once' ? 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300' : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400')"
+                                                      x-text="post.schedule_type === 'recurring' ? 'Recorrente' : (post.schedule_type === 'once' ? 'Agendado' : 'Imediato')">
+                                                </span>
+                                            </div>
+                                            <p class="text-xs text-gray-400 mt-0.5" x-text="`${(post.target_group_ids || []).length} grupo(s) de destino`"></p>
+                                        </div>
+
+                                        <!-- Status Badge -->
+                                        <span class="px-2.5 py-1 text-xs font-semibold rounded-full capitalize whitespace-nowrap"
+                                              :class="getPostStatusBadgeClass(post.status)"
+                                              x-text="getPostStatusLabel(post.status)">
+                                        </span>
+                                    </div>
+
+                                    <!-- Message Text Preview -->
+                                    <div class="p-3 rounded-xl bg-gray-50/70 dark:bg-gray-900/50 text-xs text-gray-700 dark:text-gray-300 line-clamp-3 font-normal leading-relaxed border border-gray-100 dark:border-gray-800" x-text="post.text || '(Sem texto, apenas mídia)'">
+                                    </div>
+
+                                    <!-- Media & Scheduling Meta Badges -->
+                                    <div class="flex flex-wrap items-center gap-2 text-[11px]">
+                                        <div x-show="post.media_type" class="flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 font-medium">
+                                            <i data-lucide="paperclip" class="w-3 h-3"></i>
+                                            <span class="uppercase text-[10px] font-bold" x-text="post.media_type"></span>
+                                        </div>
+
+                                        <div x-show="post.next_run_at" class="flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 font-medium">
+                                            <i data-lucide="clock" class="w-3 h-3 text-rose-500"></i>
+                                            <span x-text="`Próximo: ${post.next_run_at}`"></span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Post Action Buttons -->
+                                <div class="pt-3 border-t border-gray-100 dark:border-gray-800/80 flex flex-wrap items-center justify-between gap-2">
+                                    <div class="flex items-center space-x-1.5">
+                                        <!-- Publish Now Button -->
+                                        <button @click="publishPostNow(post.id)" class="px-2.5 py-1.5 rounded-lg text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 shadow-sm transition btn-press flex items-center space-x-1" title="Disparar Imediatamente">
+                                            <i data-lucide="rocket" class="w-3.5 h-3.5"></i>
+                                            <span>Disparar</span>
+                                        </button>
+
+                                        <!-- View Deliveries -->
+                                        <button @click="viewPostDeliveries(post)" class="px-2.5 py-1.5 rounded-lg text-xs font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition btn-press flex items-center space-x-1" title="Relatório de Entregas">
+                                            <i data-lucide="list-checks" class="w-3.5 h-3.5 text-rose-500"></i>
+                                            <span>Entregas</span>
+                                        </button>
+                                    </div>
+
+                                    <div class="flex items-center space-x-1">
+                                        <!-- Bulk Edit Remote -->
+                                        <button @click="openBulkEditModal(post)" class="p-1.5 rounded-lg text-gray-500 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-800 transition btn-press" title="Editar Mensagem Enviada em Massa">
+                                            <i data-lucide="edit-3" class="w-4 h-4"></i>
+                                        </button>
+
+                                        <!-- Bulk Delete Remote -->
+                                        <button @click="openBulkDeleteModal(post)" class="p-1.5 rounded-lg text-gray-500 hover:text-red-500 hover:bg-red-500/10 transition btn-press" title="Apagar Mensagens Enviadas do Telegram">
+                                            <i data-lucide="trash" class="w-4 h-4"></i>
+                                        </button>
+
+                                        <!-- Edit Post Configuration -->
+                                        <button @click="editPostContent(post)" class="p-1.5 rounded-lg text-gray-500 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-800 transition btn-press" title="Editar Configuração do Post">
+                                            <i data-lucide="pencil" class="w-4 h-4"></i>
+                                        </button>
+
+                                        <!-- Delete Post Record -->
+                                        <button @click="deletePostRecord(post.id)" class="p-1.5 rounded-lg text-red-500 hover:bg-red-500/10 transition btn-press" title="Excluir Registro">
+                                            <i data-lucide="trash-2" class="w-4 h-4"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+
+                <!-- SUB-VIEW 2: 3-STEP COMPOSER WIZARD -->
+                <div x-show="publisherTab === 'composer'" class="glass-panel rounded-3xl p-6 sm:p-8 space-y-6 max-w-4xl mx-auto shadow-md">
+                    <!-- Composer Header -->
+                    <div class="flex items-center justify-between border-b border-gray-200 dark:border-gray-800 pb-4">
+                        <div>
+                            <h3 class="text-xl font-bold tracking-tight text-gray-900 dark:text-white" x-text="isEditingPost ? 'Editar Postagem' : 'Novo Post / Agendador'"></h3>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Assistente de 3 passos para redação, escolha de grupos e agendamento de disparo.</p>
+                        </div>
+                        <button @click="publisherTab = 'list'" class="px-3 py-1.5 rounded-xl text-xs font-semibold text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition btn-press flex items-center space-x-1">
+                            <i data-lucide="x" class="w-4 h-4"></i>
+                            <span>Cancelar</span>
+                        </button>
+                    </div>
+
+                    <!-- Progress Stepper -->
+                    <div class="grid grid-cols-3 gap-2">
+                        <button type="button" @click="composerStep = 1" class="flex flex-col items-center p-2 rounded-xl border text-center transition"
+                                :class="composerStep === 1 ? 'border-rose-500 bg-rose-500/10 text-rose-600 dark:text-rose-400 font-bold' : (composerStep > 1 ? 'border-rose-500/30 text-gray-700 dark:text-gray-300' : 'border-gray-200 dark:border-gray-800 text-gray-400')">
+                            <span class="text-xs">1. Mensagem & Mídia</span>
+                        </button>
+                        <button type="button" @click="if (canAdvanceComposerStep(1)) composerStep = 2" class="flex flex-col items-center p-2 rounded-xl border text-center transition"
+                                :class="composerStep === 2 ? 'border-rose-500 bg-rose-500/10 text-rose-600 dark:text-rose-400 font-bold' : (composerStep > 2 ? 'border-rose-500/30 text-gray-700 dark:text-gray-300' : 'border-gray-200 dark:border-gray-800 text-gray-400')">
+                            <span class="text-xs">2. Grupos de Destino</span>
+                        </button>
+                        <button type="button" @click="if (canAdvanceComposerStep(1) && canAdvanceComposerStep(2)) composerStep = 3" class="flex flex-col items-center p-2 rounded-xl border text-center transition"
+                                :class="composerStep === 3 ? 'border-rose-500 bg-rose-500/10 text-rose-600 dark:text-rose-400 font-bold' : 'border-gray-200 dark:border-gray-800 text-gray-400'">
+                            <span class="text-xs">3. Agendamento & Disparo</span>
+                        </button>
+                    </div>
+
+                    <!-- STEP 1: MENSAGEM & MÍDIA -->
+                    <div x-show="composerStep === 1" class="space-y-4">
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">Título / Identificador Interno</label>
+                            <input type="text" x-model="postForm.name" required class="w-full px-3.5 py-2 rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-xs outline-none focus:ring-2 focus:ring-rose-500 font-medium" placeholder="Ex: Anúncio do Lançamento de Sexta">
+                        </div>
+
+                        <div>
+                            <div class="flex items-center justify-between mb-1">
+                                <label class="block text-xs font-semibold text-gray-700 dark:text-gray-300">Texto da Mensagem</label>
+                                <span class="text-[11px] text-gray-400" x-text="`${postForm.text ? postForm.text.length : 0} caracteres`"></span>
+                            </div>
+                            <textarea x-model="postForm.text" rows="6" class="w-full px-3.5 py-2.5 rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-xs outline-none focus:ring-2 focus:ring-rose-500 font-normal leading-relaxed" placeholder="Digite o conteúdo da publicação aqui. Suporta **negrito**, __itálico__ e links..."></textarea>
+                        </div>
+
+                        <!-- Media Attachment (1 Media) -->
+                        <div class="space-y-2">
+                            <label class="block text-xs font-semibold text-gray-700 dark:text-gray-300">Anexo de Mídia (Opcional - 1 arquivo)</label>
+                            
+                            <!-- If no media uploaded -->
+                            <div x-show="!postForm.media_path" class="p-5 rounded-2xl border-2 border-dashed border-gray-300 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-900/30 text-center space-y-2">
+                                <i data-lucide="image" class="w-8 h-8 text-gray-400 mx-auto"></i>
+                                <p class="text-xs text-gray-600 dark:text-gray-400">Arraste uma foto, vídeo ou documento ou selecione abaixo:</p>
+                                <label class="inline-flex items-center space-x-1.5 px-4 py-2 rounded-xl text-xs font-semibold text-rose-600 dark:text-rose-400 bg-rose-500/10 hover:bg-rose-500/20 cursor-pointer transition btn-press border border-rose-500/20">
+                                    <i data-lucide="upload" class="w-3.5 h-3.5"></i>
+                                    <span>Carregar Arquivo</span>
+                                    <input type="file" @change="handleMediaFileUpload($event)" class="hidden">
+                                </label>
+                                <div x-show="uploadingMedia" class="text-xs text-rose-500 flex items-center justify-center space-x-1 pt-1">
+                                    <i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i>
+                                    <span>Enviando arquivo para o servidor...</span>
+                                </div>
+                            </div>
+
+                            <!-- If media uploaded -->
+                            <div x-show="postForm.media_path" class="p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/25 flex items-center justify-between">
+                                <div class="flex items-center space-x-3">
+                                    <div class="w-10 h-10 rounded-xl bg-rose-600 text-white flex items-center justify-center font-bold flex-shrink-0">
+                                        <i data-lucide="paperclip" class="w-5 h-5"></i>
+                                    </div>
+                                    <div>
+                                        <h5 class="font-bold text-xs text-gray-900 dark:text-white" x-text="postForm.media_filename || 'Arquivo Carregado'"></h5>
+                                        <span class="text-[10px] uppercase font-bold text-rose-600 dark:text-rose-400" x-text="postForm.media_type || 'Mídia'"></span>
+                                    </div>
+                                </div>
+                                <button type="button" @click="removeMediaFromPost()" class="px-3 py-1.5 rounded-xl text-xs text-red-500 hover:bg-red-500/10 transition btn-press flex items-center space-x-1">
+                                    <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                                    <span>Remover</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- STEP 2: GRUPOS DE DESTINO -->
+                    <div x-show="composerStep === 2" class="space-y-4">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <h4 class="font-bold text-sm text-gray-900 dark:text-white">Selecione os Grupos e Canais de Destino</h4>
+                                <p class="text-xs text-gray-500 dark:text-gray-400" x-text="`${postForm.target_group_ids.length} de ${managedGroups.length} selecionados`"></p>
+                            </div>
+                            <div class="flex space-x-2">
+                                <button type="button" @click="selectAllTargetGroups()" class="px-3 py-1 rounded-lg text-xs font-semibold text-rose-600 dark:text-rose-400 bg-rose-500/10 hover:bg-rose-500/20 transition btn-press">
+                                    Todos
+                                </button>
+                                <button type="button" @click="deselectAllTargetGroups()" class="px-3 py-1 rounded-lg text-xs font-semibold text-gray-600 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 transition btn-press">
+                                    Nenhum
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Warning if no managed groups -->
+                        <div x-show="managedGroups.length === 0" class="p-4 rounded-2xl bg-amber-950/20 border border-amber-800/40 text-xs text-amber-300 space-y-2">
+                            <p>Você ainda não cadastrou nenhum grupo ou canal de destino.</p>
+                            <button type="button" @click="openImportGroupsModal()" class="px-3 py-1.5 rounded-xl bg-amber-600 text-white font-semibold hover:bg-amber-700 transition btn-press">
+                                Importar Diálogos Agora
+                            </button>
+                        </div>
+
+                        <!-- Groups Multi-Select Grid -->
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-80 overflow-y-auto pr-1">
+                            <template x-for="group in managedGroups" :key="group.id">
+                                <div @click="togglePostTargetGroup(group.id)"
+                                     class="p-3 rounded-xl border cursor-pointer transition flex items-center justify-between"
+                                     :class="isTargetGroupSelected(group.id) ? 'border-rose-500 bg-rose-500/10 text-rose-600 dark:text-rose-400 font-semibold' : 'border-gray-200 dark:border-gray-800 bg-white/50 dark:bg-gray-900/30 text-gray-700 dark:text-gray-300 hover:border-gray-400'">
+                                    <div class="truncate pr-2">
+                                        <div class="text-xs truncate" x-text="group.title"></div>
+                                        <div class="text-[10px] text-gray-400 truncate" x-text="group.username ? '@' + group.username : group.chat_id"></div>
+                                    </div>
+                                    <div class="w-5 h-5 rounded-lg border flex items-center justify-center flex-shrink-0"
+                                         :class="isTargetGroupSelected(group.id) ? 'bg-rose-600 border-rose-600 text-white' : 'border-gray-300 dark:border-gray-700'">
+                                        <i data-lucide="check" class="w-3.5 h-3.5" x-show="isTargetGroupSelected(group.id)"></i>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+
+                    <!-- STEP 3: AGENDAMENTO & DISPARO -->
+                    <div x-show="composerStep === 3" class="space-y-5">
+                        <div class="space-y-2">
+                            <label class="block text-xs font-semibold text-gray-700 dark:text-gray-300">Escolha o Modo de Execução</label>
+                            <div class="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
+                                <!-- Now -->
+                                <button type="button" @click="postForm.schedule_type = 'now'" class="p-3.5 rounded-2xl border text-left transition flex flex-col justify-between space-y-2"
+                                        :class="postForm.schedule_type === 'now' ? 'border-rose-500 bg-rose-500/10 text-rose-600 dark:text-rose-400 font-bold' : 'border-gray-200 dark:border-gray-800 bg-white/50 dark:bg-gray-900/30 text-gray-700 dark:text-gray-300'">
+                                    <i data-lucide="rocket" class="w-5 h-5"></i>
+                                    <div>
+                                        <div class="text-xs">Imediato</div>
+                                        <div class="text-[10px] text-gray-400 font-normal">Disparar agora</div>
+                                    </div>
+                                </button>
+
+                                <!-- Once -->
+                                <button type="button" @click="postForm.schedule_type = 'once'" class="p-3.5 rounded-2xl border text-left transition flex flex-col justify-between space-y-2"
+                                        :class="postForm.schedule_type === 'once' ? 'border-rose-500 bg-rose-500/10 text-rose-600 dark:text-rose-400 font-bold' : 'border-gray-200 dark:border-gray-800 bg-white/50 dark:bg-gray-900/30 text-gray-700 dark:text-gray-300'">
+                                    <i data-lucide="calendar" class="w-5 h-5"></i>
+                                    <div>
+                                        <div class="text-xs">Agendado</div>
+                                        <div class="text-[10px] text-gray-400 font-normal">Data e hora fixas</div>
+                                    </div>
+                                </button>
+
+                                <!-- Recurring -->
+                                <button type="button" @click="postForm.schedule_type = 'recurring'" class="p-3.5 rounded-2xl border text-left transition flex flex-col justify-between space-y-2"
+                                        :class="postForm.schedule_type === 'recurring' ? 'border-rose-500 bg-rose-500/10 text-rose-600 dark:text-rose-400 font-bold' : 'border-gray-200 dark:border-gray-800 bg-white/50 dark:bg-gray-900/30 text-gray-700 dark:text-gray-300'">
+                                    <i data-lucide="repeat" class="w-5 h-5"></i>
+                                    <div>
+                                        <div class="text-xs">Recorrente</div>
+                                        <div class="text-[10px] text-gray-400 font-normal">Repetir ciclo</div>
+                                    </div>
+                                </button>
+
+                                <!-- Draft -->
+                                <button type="button" @click="postForm.schedule_type = 'draft'" class="p-3.5 rounded-2xl border text-left transition flex flex-col justify-between space-y-2"
+                                        :class="postForm.schedule_type === 'draft' ? 'border-rose-500 bg-rose-500/10 text-rose-600 dark:text-rose-400 font-bold' : 'border-gray-200 dark:border-gray-800 bg-white/50 dark:bg-gray-900/30 text-gray-700 dark:text-gray-300'">
+                                    <i data-lucide="file-text" class="w-5 h-5"></i>
+                                    <div>
+                                        <div class="text-xs">Rascunho</div>
+                                        <div class="text-[10px] text-gray-400 font-normal">Salvar s/ enviar</div>
+                                    </div>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Schedule Date Input (Once) -->
+                        <div x-show="postForm.schedule_type === 'once'" class="p-4 rounded-2xl bg-gray-50 dark:bg-gray-900/40 border border-gray-200 dark:border-gray-800 space-y-2">
+                            <label class="block text-xs font-semibold text-gray-700 dark:text-gray-300">Data e Horário do Disparo</label>
+                            <input type="datetime-local" x-model="postForm.run_at" class="px-3.5 py-2 rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-xs outline-none focus:ring-2 focus:ring-rose-500">
+                        </div>
+
+                        <!-- Recurrence Settings (Recurring) -->
+                        <div x-show="postForm.schedule_type === 'recurring'" class="p-4 rounded-2xl bg-gray-50 dark:bg-gray-900/40 border border-gray-200 dark:border-gray-800 space-y-3">
+                            <label class="block text-xs font-semibold text-gray-700 dark:text-gray-300">Configuração da Recorrência</label>
+                            
+                            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                <div>
+                                    <label class="block text-[11px] font-semibold text-gray-500 mb-1">Frequência</label>
+                                    <select x-model="postForm.recurrence_rule.freq" class="w-full px-3 py-2 rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-xs outline-none">
+                                        <option value="daily">Diário (Horário fixo)</option>
+                                        <option value="interval">Intervalo de Horas</option>
+                                        <option value="weekly">Semanal</option>
+                                    </select>
+                                </div>
+
+                                <div x-show="postForm.recurrence_rule.freq === 'interval'">
+                                    <label class="block text-[11px] font-semibold text-gray-500 mb-1">A cada quantas horas?</label>
+                                    <input type="number" min="1" max="168" x-model="postForm.recurrence_rule.interval_hours" class="w-full px-3 py-2 rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-xs outline-none">
+                                </div>
+
+                                <div x-show="postForm.recurrence_rule.freq === 'daily' || postForm.recurrence_rule.freq === 'weekly'">
+                                    <label class="block text-[11px] font-semibold text-gray-500 mb-1">Horário (HH:MM)</label>
+                                    <input type="time" x-model="postForm.recurrence_rule.time_hhmm" class="w-full px-3 py-2 rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-xs outline-none">
+                                </div>
+
+                                <div x-show="postForm.recurrence_rule.freq === 'weekly'">
+                                    <label class="block text-[11px] font-semibold text-gray-500 mb-1">Dia da Semana</label>
+                                    <select x-model.number="postForm.recurrence_rule.weekday" class="w-full px-3 py-2 rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-xs outline-none">
+                                        <option :value="0">Segunda-feira</option>
+                                        <option :value="1">Terça-feira</option>
+                                        <option :value="2">Quarta-feira</option>
+                                        <option :value="3">Quinta-feira</option>
+                                        <option :value="4">Sexta-feira</option>
+                                        <option :value="5">Sábado</option>
+                                        <option :value="6">Domingo</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Summary Card -->
+                        <div class="rounded-2xl p-4 bg-gradient-to-tr from-rose-500/10 via-red-500/5 to-transparent border border-rose-500/20 space-y-2">
+                            <div class="flex items-center space-x-2">
+                                <i data-lucide="file-check" class="w-4 h-4 text-rose-500"></i>
+                                <span class="font-bold text-xs text-gray-900 dark:text-white">Resumo da Postagem</span>
+                            </div>
+                            <p class="text-xs text-gray-700 dark:text-gray-300 leading-relaxed font-medium" x-text="getPostSummaryText()"></p>
+                        </div>
+                    </div>
+
+                    <!-- Composer Wizard Navigation Footer -->
+                    <div class="flex items-center justify-between pt-4 border-t border-gray-200 dark:border-gray-800">
+                        <button type="button" @click="prevComposerStep()" x-show="composerStep > 1" class="px-5 py-2.5 rounded-xl text-xs font-semibold text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition btn-press flex items-center space-x-1">
+                            <i data-lucide="arrow-left" class="w-3.5 h-3.5"></i>
+                            <span>Voltar</span>
+                        </button>
+                        <div x-show="composerStep === 1"></div>
+
+                        <div class="flex items-center space-x-2">
+                            <button type="button" @click="nextComposerStep()" x-show="composerStep < 3" class="px-6 py-2.5 rounded-xl text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 shadow-md shadow-rose-600/25 transition btn-press flex items-center space-x-1">
+                                <span>Avançar</span>
+                                <i data-lucide="arrow-right" class="w-3.5 h-3.5"></i>
+                            </button>
+
+                            <button type="button" @click="submitPostForm()" x-show="composerStep === 3" class="px-6 py-2.5 rounded-xl text-xs font-semibold text-white bg-gradient-to-r from-rose-600 to-red-700 hover:from-rose-700 hover:to-red-800 shadow-md shadow-rose-600/25 transition btn-press flex items-center space-x-1">
+                                <i data-lucide="check" class="w-3.5 h-3.5"></i>
+                                <span x-text="isEditingPost ? 'Salvar Alterações' : (postForm.schedule_type === 'now' ? 'Publicar Agora' : 'Salvar Postagem')"></span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- TAB 3: GLOBAL TEXT REPLACEMENT RULES WITH SLIDE-RIGHT TRANSITION -->
+            <section x-show="activeTab === 'rules'" 
+                     x-transition:enter="transition transform ease-out duration-300"
+                     x-transition:enter-start="opacity-0 translate-x-10"
+                     x-transition:enter-end="opacity-100 translate-x-0"
+                     x-transition:leave="transition ease-in duration-100"
+                     x-transition:leave-start="opacity-100"
+                     x-transition:leave-end="opacity-0"
+                     class="glass-panel rounded-3xl p-6 sm:p-8 space-y-6 max-w-4xl mx-auto shadow-md">
+                <div class="border-b border-gray-200 dark:border-gray-800 pb-4 flex justify-between items-center">
+                    <div>
+                        <h3 class="text-xl font-bold tracking-tight text-gray-900 dark:text-white">Regras Globais de Substituição</h3>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Defina palavras-chave, links de afiliados ou expressões regulares para trocar em todas as tarefas.</p>
+                    </div>
+                </div>
+
+                <!-- Add new rule form -->
+                <form @submit.prevent="createGlobalRule()" class="grid grid-cols-1 sm:grid-cols-4 gap-3 p-4 rounded-2xl bg-gray-100/60 dark:bg-gray-900/40 border border-gray-200/60 dark:border-gray-800/60">
+                    <div>
+                        <label class="block text-[11px] font-semibold text-gray-600 dark:text-gray-400 mb-1">Nome / Descrição</label>
+                        <input type="text" x-model="newGlobalRule.name" class="w-full px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-xs outline-none" placeholder="Trocar Afiliado">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-semibold text-gray-600 dark:text-gray-400 mb-1">Texto a Procurar</label>
+                        <input type="text" x-model="newGlobalRule.pattern" required class="w-full px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-xs outline-none" placeholder="@canal_antigo">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-semibold text-gray-600 dark:text-gray-400 mb-1">Substituir Por</label>
+                        <input type="text" x-model="newGlobalRule.replacement" class="w-full px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-xs outline-none" placeholder="@meu_canal">
+                    </div>
+                    <div class="flex items-end">
+                        <button type="submit" class="w-full py-1.5 rounded-lg text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 transition btn-press flex items-center justify-center space-x-1">
+                            <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+                            <span>Adicionar</span>
+                        </button>
+                    </div>
+                </form>
+
+                <!-- Rules Table -->
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-xs">
+                        <thead>
+                            <tr class="border-b border-gray-200 dark:border-gray-800 text-gray-400">
+                                <th class="py-2.5 font-semibold">Status</th>
+                                <th class="py-2.5 font-semibold">Nome</th>
+                                <th class="py-2.5 font-semibold">Texto Original</th>
+                                <th class="py-2.5 font-semibold">Substituição</th>
+                                <th class="py-2.5 font-semibold text-right">Ação</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-100 dark:divide-gray-800/60">
+                            <template x-for="rule in rules" :key="rule.id">
+                                <tr>
+                                    <!-- Toggle Switch -->
+                                    <td class="py-3">
+                                        <button type="button" @click="toggleRuleEnabled(rule)" class="relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none"
+                                                :class="rule.enabled ? 'bg-rose-600' : 'bg-gray-300 dark:bg-gray-700'">
+                                            <span class="inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200 ease-in-out"
+                                                  :class="rule.enabled ? 'translate-x-4' : 'translate-x-0'"></span>
+                                        </button>
+                                    </td>
+                                    <td class="py-3 font-medium text-gray-900 dark:text-white" x-text="rule.name"></td>
+                                    <td class="py-3 font-mono text-rose-500" x-text="rule.pattern"></td>
+                                    <td class="py-3 font-mono text-gray-500 dark:text-gray-400" x-text="rule.replacement || '(remover)'"></td>
+                                    <td class="py-3 text-right">
+                                        <button @click="deleteGlobalRule(rule.id)" class="text-red-500 hover:text-red-700 text-xs btn-press">
+                                            Excluir
+                                        </button>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                    <div x-show="rules.length === 0" class="py-8 text-center text-gray-400 text-xs">
+                        Nenhuma regra de substituição cadastrada.
+                    </div>
+                </div>
+            </section>
+
+            <!-- TAB 4: LIVE TERMINAL / CONSOLE WITH SLIDE-RIGHT TRANSITION -->
+            <section x-show="activeTab === 'logs'" 
+                     x-transition:enter="transition transform ease-out duration-300"
+                     x-transition:enter-start="opacity-0 translate-x-10"
+                     x-transition:enter-end="opacity-100 translate-x-0"
+                     x-transition:leave="transition ease-in duration-100"
+                     x-transition:leave-start="opacity-100"
+                     x-transition:leave-end="opacity-0"
+                     class="space-y-3 max-w-5xl mx-auto">
+                <!-- Header & Filter Bar -->
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                    <div class="flex items-center space-x-2">
+                        <span class="font-bold text-sm text-gray-900 dark:text-white">Terminal de Eventos Global</span>
+                        <span class="text-xs px-2 py-0.5 rounded-full bg-gray-200 dark:bg-gray-800 text-gray-600 dark:text-gray-400" x-text="`${filteredLogs.length} logs`"></span>
+                    </div>
+
+                    <div class="flex items-center space-x-2">
+                        <!-- Filter Select -->
+                        <select x-model="logFilter" class="px-2.5 py-1 rounded-lg text-xs border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 outline-none">
+                            <option value="all">Todos os Níveis</option>
+                            <option value="info">Info</option>
+                            <option value="success">Success</option>
+                            <option value="warning">Warning</option>
+                            <option value="error">Error</option>
+                        </select>
+
+                        <!-- Search Input -->
+                        <input type="text" x-model="logSearch" placeholder="Buscar no log..." class="px-3 py-1 rounded-lg text-xs border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 outline-none w-36 sm:w-48">
+
+                        <!-- Clear Button -->
+                        <button @click="clearLogs()" class="px-3 py-1 rounded-lg text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 transition btn-press">
+                            Limpar
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Terminal Box -->
+                <div id="terminal-container" class="w-full h-[450px] rounded-2xl bg-gray-950 text-gray-200 font-mono text-xs p-4 overflow-y-auto terminal-scroll border border-gray-800 shadow-inner space-y-1.5">
+                    <template x-for="(log, idx) in filteredLogs" :key="idx">
+                        <div class="flex items-start space-x-2 leading-relaxed">
+                            <span class="text-gray-500 select-none text-[11px]" x-text="`[${log.timestamp}]`"></span>
+                            <span class="px-1.5 py-0.2 rounded text-[10px] font-bold uppercase select-none"
+                                  :class="{
+                                      'bg-rose-950 text-rose-400 border border-rose-800/40': log.level === 'success' || log.level === 'info',
+                                      'bg-gray-900 text-gray-400 border border-gray-700': log.level === 'warning',
+                                      'bg-red-950 text-red-400 border border-red-800/40': log.level === 'error'
+                                  }"
+                                  x-text="log.level">
+                            </span>
+                            <span class="text-gray-200 break-all" x-text="log.message"></span>
+                        </div>
+                    </template>
+                    <div x-show="filteredLogs.length === 0" class="text-gray-600 italic text-center py-20">
+                        Aguardando eventos do motor de clonagem...
+                    </div>
+                </div>
+            </section>
+
+        </main>
+    </div>
+
+    <!-- AUTHENTICATION MODAL (Apple Style Dialog) -->
+    <div x-show="authModalOpen" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md transition-opacity">
+        <div @click.away="authModalOpen = false" 
+             x-transition:enter="transition transform ease-out duration-200"
+             x-transition:enter-start="opacity-0 scale-95"
+             x-transition:enter-end="opacity-100 scale-100"
+             class="glass-panel w-full max-w-md rounded-3xl p-6 sm:p-8 space-y-5 shadow-2xl border border-white/10">
+            <!-- Modal Header -->
+            <div class="flex items-center justify-between border-b border-gray-200 dark:border-gray-800 pb-3">
+                <div class="flex items-center space-x-2">
+                    <div class="w-8 h-8 rounded-xl bg-rose-600 text-white flex items-center justify-center font-bold">
+                        <i data-lucide="send" class="w-4 h-4"></i>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-base text-gray-900 dark:text-white">Conectar Telegram</h3>
+                        <p class="text-[11px] text-gray-500 dark:text-gray-400">Autenticação oficial via Pyrogram</p>
+                    </div>
+                </div>
+                <button @click="authModalOpen = false" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 p-1.5 rounded-lg btn-press">
+                    <i data-lucide="x" class="w-4 h-4"></i>
+                </button>
+            </div>
+
+            <!-- If already authenticated: show profile and logout -->
+            <template x-if="auth.is_authenticated">
+                <div class="space-y-4 text-center py-2">
+                    <div class="w-16 h-16 rounded-full bg-rose-500/10 text-rose-600 dark:text-rose-400 mx-auto flex items-center justify-center text-2xl font-bold">
+                        <i data-lucide="check" class="w-8 h-8"></i>
+                    </div>
+                    <div>
+                        <h4 class="font-bold text-lg text-gray-900 dark:text-white" x-text="auth.account_name"></h4>
+                        <p class="text-xs text-gray-500 dark:text-gray-400" x-text="`ID: ${auth.user_id || '-'} | ${auth.account_type || ''}`"></p>
+                    </div>
+                    <div class="pt-4 flex space-x-3">
+                        <button @click="authModalOpen = false" class="flex-1 py-2.5 rounded-xl text-xs font-semibold text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 transition btn-press">
+                            Fechar
+                        </button>
+                        <button @click="logout()" class="flex-1 py-2.5 rounded-xl text-xs font-semibold text-white bg-red-700 hover:bg-red-800 transition btn-press">
+                            Desconectar Conta
+                        </button>
+                    </div>
+                </div>
+            </template>
+
+            <!-- If not authenticated: wizard -->
+            <template x-if="!auth.is_authenticated">
+                <div class="space-y-4">
+                    <!-- Auth Mode Selector (User vs Bot) -->
+                    <div class="grid grid-cols-2 gap-2 bg-gray-200/50 dark:bg-gray-900/50 p-1 rounded-xl text-xs font-medium">
+                        <button @click="authMode = 'user'; authStep = 1" :class="authMode === 'user' ? 'bg-white dark:bg-gray-800 shadow-sm font-bold text-gray-900 dark:text-white' : 'text-gray-500'" class="py-1.5 rounded-lg transition flex items-center justify-center space-x-1.5">
+                            <i data-lucide="user" class="w-3.5 h-3.5"></i>
+                            <span>Conta Pessoal</span>
+                        </button>
+                        <button @click="authMode = 'bot'; authStep = 1" :class="authMode === 'bot' ? 'bg-white dark:bg-gray-800 shadow-sm font-bold text-gray-900 dark:text-white' : 'text-gray-500'" class="py-1.5 rounded-lg transition flex items-center justify-center space-x-1.5">
+                            <i data-lucide="bot" class="w-3.5 h-3.5"></i>
+                            <span>Bot Token</span>
+                        </button>
+                    </div>
+
+                    <!-- STEP 1: USER CREDENTIALS & PHONE -->
+                    <div x-show="authMode === 'user' && authStep === 1" class="space-y-3">
+                        <div>
+                            <label class="block text-[11px] font-semibold text-gray-700 dark:text-gray-300 mb-1">Número de Telefone Internacional</label>
+                            <input type="text" x-model="authForm.phone_number" class="w-full px-3 py-2 rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-xs outline-none focus:ring-1 focus:ring-rose-500" placeholder="+5511999999999">
+                        </div>
+                        <button @click="sendCode()" :disabled="authLoading" class="w-full py-2.5 rounded-xl text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 transition btn-press disabled:opacity-50 flex items-center justify-center space-x-1.5">
+                            <span x-text="authLoading ? 'Enviando código...' : 'Enviar Código'"></span>
+                            <i data-lucide="arrow-right" class="w-3.5 h-3.5" x-show="!authLoading"></i>
+                        </button>
+                    </div>
+
+                    <!-- STEP 2: USER VERIFY CODE -->
+                    <div x-show="authMode === 'user' && authStep === 2" class="space-y-3">
+                        <p class="text-xs text-gray-500 dark:text-gray-400">
+                            Digite o código numérico enviado para seu aplicativo do Telegram ou SMS:
+                        </p>
+                        <div>
+                            <label class="block text-[11px] font-semibold text-gray-700 dark:text-gray-300 mb-1">Código de Verificação</label>
+                            <input type="text" x-model="authForm.phone_code" class="w-full px-3 py-2 text-center text-lg font-bold tracking-widest rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 outline-none focus:ring-1 focus:ring-rose-500" placeholder="12345">
+                        </div>
+                        <div class="flex space-x-2">
+                            <button @click="authStep = 1" class="w-1/3 py-2.5 rounded-xl text-xs font-semibold text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 transition btn-press">
+                                Voltar
+                            </button>
+                            <button @click="verifyCode()" :disabled="authLoading" class="w-2/3 py-2.5 rounded-xl text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 transition btn-press disabled:opacity-50 flex items-center justify-center space-x-1">
+                                <span x-text="authLoading ? 'Validando...' : 'Confirmar Código'"></span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- STEP 3: USER 2FA PASSWORD -->
+                    <div x-show="authMode === 'user' && authStep === 3" class="space-y-3">
+                        <p class="text-xs text-gray-500 dark:text-gray-400">
+                            Sua conta possui Verificação em Duas Etapas (2FA). Insira sua senha da nuvem:
+                        </p>
+                        <div>
+                            <label class="block text-[11px] font-semibold text-gray-700 dark:text-gray-300 mb-1">Senha 2FA</label>
+                            <input type="password" x-model="authForm.password" class="w-full px-3 py-2 rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-xs outline-none focus:ring-1 focus:ring-rose-500" placeholder="••••••••">
+                        </div>
+                        <div class="flex space-x-2">
+                            <button @click="authStep = 2" class="w-1/3 py-2.5 rounded-xl text-xs font-semibold text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 transition btn-press">
+                                Voltar
+                            </button>
+                            <button @click="verifyPassword()" :disabled="authLoading" class="w-2/3 py-2.5 rounded-xl text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 transition btn-press disabled:opacity-50">
+                                <span x-text="authLoading ? 'Verificando...' : 'Entrar com 2FA'"></span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- BOT MODE -->
+                    <div x-show="authMode === 'bot'" class="space-y-3">
+                        <div>
+                            <label class="block text-[11px] font-semibold text-gray-700 dark:text-gray-300 mb-1">Bot Token (via @BotFather)</label>
+                            <input type="text" x-model="authForm.bot_token" class="w-full px-3 py-2 rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-xs outline-none" placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11">
+                        </div>
+                        <button @click="botLogin()" :disabled="authLoading" class="w-full py-2.5 rounded-xl text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 transition btn-press disabled:opacity-50">
+                            <span x-text="authLoading ? 'Conectando bot...' : 'Autenticar Bot'"></span>
+                        </button>
+                    </div>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <!-- MODAL DELETE CONFIRMATION -->
+    <div x-show="deleteModal.open" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md transition-opacity">
+        <div @click.away="deleteModal.open = false" 
+             x-transition:enter="transition transform ease-out duration-200"
+             x-transition:enter-start="opacity-0 scale-95"
+             x-transition:enter-end="opacity-100 scale-100"
+             class="glass-panel w-full max-w-sm rounded-3xl p-6 space-y-4 shadow-2xl border border-white/10 text-center">
+            <div class="w-12 h-12 rounded-full bg-red-950/60 text-red-500 mx-auto flex items-center justify-center text-xl font-bold">
+                <i data-lucide="trash-2" class="w-6 h-6"></i>
+            </div>
+            <div>
+                <h3 class="font-bold text-base text-gray-900 dark:text-white">Excluir Tarefa?</h3>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    Tem certeza que deseja excluir a tarefa <span class="font-semibold text-gray-800 dark:text-gray-200" x-text="`&ldquo;${deleteModal.taskName}&rdquo;`"></span>? Os registros e logs desta tarefa serão removidos.
+                </p>
+            </div>
+            <div class="flex space-x-3 pt-2">
+                <button @click="deleteModal.open = false" class="flex-1 py-2.5 rounded-xl text-xs font-semibold text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition btn-press">
+                    Cancelar
+                </button>
+                <button @click="confirmDeleteTask()" class="flex-1 py-2.5 rounded-xl text-xs font-semibold text-white bg-red-700 hover:bg-red-800 shadow-md shadow-red-700/25 transition btn-press">
+                    Sim, Excluir
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: IMPORTAR DIÁLOGOS / GRUPOS -->
+    <div x-show="importModalOpen" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md transition-opacity">
+        <div @click.away="importModalOpen = false"
+             x-transition:enter="transition transform ease-out duration-200"
+             x-transition:enter-start="opacity-0 scale-95"
+             x-transition:enter-end="opacity-100 scale-100"
+             class="glass-panel w-full max-w-lg rounded-3xl p-6 space-y-4 shadow-2xl border border-white/10">
+            <!-- Header -->
+            <div class="flex items-center justify-between border-b border-gray-200 dark:border-gray-800 pb-3">
+                <div class="flex items-center space-x-2">
+                    <div class="w-8 h-8 rounded-xl bg-rose-600 text-white flex items-center justify-center font-bold">
+                        <i data-lucide="download" class="w-4 h-4"></i>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-base text-gray-900 dark:text-white">Importar Diálogos</h3>
+                        <p class="text-[11px] text-gray-500 dark:text-gray-400">Selecione canais e grupos da sua conta Telegram</p>
+                    </div>
+                </div>
+                <button @click="importModalOpen = false" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 p-1.5 rounded-lg btn-press">
+                    <i data-lucide="x" class="w-4 h-4"></i>
+                </button>
+            </div>
+
+            <!-- Search and select all bar -->
+            <div class="space-y-2">
+                <div class="relative">
+                    <input type="text" x-model="importSearch" placeholder="Filtrar por nome do grupo..." class="w-full pl-9 pr-3 py-2 rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-xs outline-none focus:ring-2 focus:ring-rose-500">
+                    <i data-lucide="search" class="w-4 h-4 absolute left-3 top-2.5 text-gray-400"></i>
+                </div>
+                <div class="flex items-center justify-between text-xs pt-1">
+                    <span class="text-gray-500" x-text="`${selectedDialogsToImport.length} selecionado(s)`"></span>
+                    <div class="flex space-x-2">
+                        <button type="button" @click="selectAllImportableDialogs()" class="text-rose-600 dark:text-rose-400 font-semibold hover:underline">
+                            Selecionar Filtrados
+                        </button>
+                        <span class="text-gray-400">|</span>
+                        <button type="button" @click="deselectAllImportableDialogs()" class="text-gray-500 hover:underline">
+                            Limpar
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Dialogs Scrollable List -->
+            <div class="max-h-72 overflow-y-auto space-y-1.5 pr-1 divide-y divide-gray-100 dark:divide-gray-800/60">
+                <template x-for="dialog in getFilteredDialogs(importSearch)" :key="dialog.id">
+                    <div @click="toggleDialogToImport(dialog)"
+                         class="p-2.5 rounded-xl cursor-pointer transition flex items-center justify-between text-xs"
+                         :class="isDialogSelectedToImport(dialog) ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 font-medium' : 'hover:bg-gray-100 dark:hover:bg-gray-800/60 text-gray-800 dark:text-gray-200'">
+                        <div class="truncate pr-2">
+                            <div class="truncate font-semibold" x-text="dialog.title"></div>
+                            <div class="text-[10px] text-gray-400 truncate" x-text="`${dialog.type || 'Chat'} • ID: ${dialog.id}`"></div>
+                        </div>
+                        <div class="w-5 h-5 rounded-lg border flex items-center justify-center flex-shrink-0"
+                             :class="isDialogSelectedToImport(dialog) ? 'bg-rose-600 border-rose-600 text-white' : 'border-gray-300 dark:border-gray-700'">
+                            <i data-lucide="check" class="w-3.5 h-3.5" x-show="isDialogSelectedToImport(dialog)"></i>
+                        </div>
+                    </div>
+                </template>
+                <div x-show="dialogs.length === 0" class="text-center py-6 text-xs text-gray-400">
+                    Nenhum diálogo carregado. Conecte sua conta do Telegram primeiro.
+                </div>
+            </div>
+
+            <!-- Footer Actions -->
+            <div class="flex space-x-3 pt-3 border-t border-gray-200 dark:border-gray-800">
+                <button @click="importModalOpen = false" class="flex-1 py-2.5 rounded-xl text-xs font-semibold text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 transition btn-press">
+                    Cancelar
+                </button>
+                <button @click="importSelectedGroups()" :disabled="importingGroups || selectedDialogsToImport.length === 0" class="flex-1 py-2.5 rounded-xl text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 transition btn-press disabled:opacity-50 flex items-center justify-center space-x-1.5 shadow-md shadow-rose-600/25">
+                    <i data-lucide="check" class="w-3.5 h-3.5" x-show="!importingGroups"></i>
+                    <span x-text="importingGroups ? 'Importando...' : `Importar (${selectedDialogsToImport.length})`"></span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: BULK EDIT REMOTE -->
+    <div x-show="bulkEditModal.open" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md transition-opacity">
+        <div @click.away="bulkEditModal.open = false"
+             x-transition:enter="transition transform ease-out duration-200"
+             x-transition:enter-start="opacity-0 scale-95"
+             x-transition:enter-end="opacity-100 scale-100"
+             class="glass-panel w-full max-w-md rounded-3xl p-6 space-y-4 shadow-2xl border border-white/10">
+            <div class="flex items-center justify-between border-b border-gray-200 dark:border-gray-800 pb-3">
+                <div class="flex items-center space-x-2">
+                    <div class="w-8 h-8 rounded-xl bg-rose-600 text-white flex items-center justify-center font-bold">
+                        <i data-lucide="edit-3" class="w-4 h-4"></i>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-base text-gray-900 dark:text-white">Edição em Massa Remota</h3>
+                        <p class="text-[11px] text-gray-500 dark:text-gray-400" x-text="bulkEditModal.postName"></p>
+                    </div>
+                </div>
+                <button @click="bulkEditModal.open = false" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 p-1.5 rounded-lg btn-press">
+                    <i data-lucide="x" class="w-4 h-4"></i>
+                </button>
+            </div>
+
+            <div class="space-y-3">
+                <p class="text-xs text-gray-600 dark:text-gray-400">
+                    Altere o texto da postagem para atualizar a mensagem nos canais e grupos do Telegram onde foi entregue com sucesso:
+                </p>
+                <div>
+                    <label class="block text-[11px] font-semibold text-gray-700 dark:text-gray-300 mb-1">Novo Texto da Mensagem</label>
+                    <textarea x-model="bulkEditModal.newText" rows="5" class="w-full px-3.5 py-2.5 rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-xs outline-none focus:ring-2 focus:ring-rose-500 font-normal leading-relaxed" placeholder="Digite o novo texto atualizado..."></textarea>
+                </div>
+            </div>
+
+            <div class="flex space-x-3 pt-2">
+                <button @click="bulkEditModal.open = false" class="flex-1 py-2.5 rounded-xl text-xs font-semibold text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 transition btn-press">
+                    Cancelar
+                </button>
+                <button @click="executeBulkEdit()" :disabled="bulkEditModal.loading" class="flex-1 py-2.5 rounded-xl text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 shadow-md shadow-rose-600/25 transition btn-press disabled:opacity-50 flex items-center justify-center space-x-1.5">
+                    <i data-lucide="check" class="w-3.5 h-3.5" x-show="!bulkEditModal.loading"></i>
+                    <span x-text="bulkEditModal.loading ? 'Atualizando nos grupos...' : 'Salvar e Atualizar'"></span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: BULK DELETE REMOTE -->
+    <div x-show="bulkDeleteModal.open" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md transition-opacity">
+        <div @click.away="bulkDeleteModal.open = false"
+             x-transition:enter="transition transform ease-out duration-200"
+             x-transition:enter-start="opacity-0 scale-95"
+             x-transition:enter-end="opacity-100 scale-100"
+             class="glass-panel w-full max-w-sm rounded-3xl p-6 space-y-4 shadow-2xl border border-white/10 text-center">
+            <div class="w-12 h-12 rounded-full bg-red-950/60 text-red-500 mx-auto flex items-center justify-center text-xl font-bold">
+                <i data-lucide="trash" class="w-6 h-6"></i>
+            </div>
+            <div>
+                <h3 class="font-bold text-base text-gray-900 dark:text-white">Apagar Mensagens no Telegram?</h3>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    Esta ação apagará permanentemente a mensagem enviada de todos os grupos do Telegram registrados nas entregas de <span class="font-semibold text-gray-800 dark:text-gray-200" x-text="`&ldquo;${bulkDeleteModal.postName}&rdquo;`"></span>.
+                </p>
+            </div>
+            <div class="flex space-x-3 pt-2">
+                <button @click="bulkDeleteModal.open = false" class="flex-1 py-2.5 rounded-xl text-xs font-semibold text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 transition btn-press">
+                    Cancelar
+                </button>
+                <button @click="executeBulkDelete()" :disabled="bulkDeleteModal.loading" class="flex-1 py-2.5 rounded-xl text-xs font-semibold text-white bg-red-700 hover:bg-red-800 shadow-md shadow-red-700/25 transition btn-press disabled:opacity-50">
+                    <span x-text="bulkDeleteModal.loading ? 'Apagando mensagens...' : 'Sim, Apagar Remoto'"></span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: DELIVERIES REPORT -->
+    <div x-show="deliveriesModal.open" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md transition-opacity">
+        <div @click.away="deliveriesModal.open = false"
+             x-transition:enter="transition transform ease-out duration-200"
+             x-transition:enter-start="opacity-0 scale-95"
+             x-transition:enter-end="opacity-100 scale-100"
+             class="glass-panel w-full max-w-2xl rounded-3xl p-6 sm:p-8 space-y-4 shadow-2xl border border-white/10">
+            <!-- Header -->
+            <div class="flex items-center justify-between border-b border-gray-200 dark:border-gray-800 pb-3">
+                <div class="flex items-center space-x-2">
+                    <div class="w-8 h-8 rounded-xl bg-rose-600 text-white flex items-center justify-center font-bold">
+                        <i data-lucide="list-checks" class="w-4 h-4"></i>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-base text-gray-900 dark:text-white">Relatório de Entregas</h3>
+                        <p class="text-[11px] text-gray-500 dark:text-gray-400" x-text="deliveriesModal.postName"></p>
+                    </div>
+                </div>
+                <button @click="deliveriesModal.open = false" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 p-1.5 rounded-lg btn-press">
+                    <i data-lucide="x" class="w-4 h-4"></i>
+                </button>
+            </div>
+
+            <!-- Deliveries Table -->
+            <div class="overflow-x-auto max-h-80 overflow-y-auto">
+                <table class="w-full text-left text-xs">
+                    <thead>
+                        <tr class="border-b border-gray-200 dark:border-gray-800 text-gray-400">
+                            <th class="py-2.5 font-semibold">Grupo / Destino</th>
+                            <th class="py-2.5 font-semibold">Status</th>
+                            <th class="py-2.5 font-semibold">ID Mensagem</th>
+                            <th class="py-2.5 font-semibold">Data / Detalhe</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-100 dark:divide-gray-800/60">
+                        <template x-for="del in deliveriesModal.deliveries" :key="del.id">
+                            <tr>
+                                <td class="py-2.5 font-medium text-gray-900 dark:text-white truncate max-w-[150px]" x-text="del.chat_id"></td>
+                                <td class="py-2.5">
+                                    <span class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase"
+                                          :class="{
+                                              'bg-rose-500/15 text-rose-600 dark:text-rose-400': del.status === 'sent' || del.status === 'edited',
+                                              'bg-gray-100 dark:bg-gray-800 text-gray-400': del.status === 'deleted',
+                                              'bg-red-950 text-red-400': del.status === 'failed'
+                                          }"
+                                          x-text="del.status">
+                                    </span>
+                                </td>
+                                <td class="py-2.5 font-mono text-gray-500" x-text="del.message_id || '-'"></td>
+                                <td class="py-2.5 text-gray-500 dark:text-gray-400 truncate max-w-[200px]" x-text="del.error_message || del.sent_at || '-'"></td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+                <div x-show="deliveriesModal.deliveries.length === 0 && !deliveriesModal.loading" class="py-8 text-center text-gray-400 text-xs">
+                    Nenhum registro de entrega encontrado para esta postagem.
+                </div>
+                <div x-show="deliveriesModal.loading" class="py-8 text-center text-rose-500 text-xs flex items-center justify-center space-x-2">
+                    <i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i>
+                    <span>Carregando histórico de entregas...</span>
+                </div>
+            </div>
+
+            <!-- Footer -->
+            <div class="pt-3 border-t border-gray-200 dark:border-gray-800 flex justify-end">
+                <button @click="deliveriesModal.open = false" class="px-5 py-2 rounded-xl text-xs font-semibold text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 transition btn-press">
+                    Fechar
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- TOAST NOTIFICATIONS (Floating Bottom Right) -->
+    <div class="fixed bottom-6 right-6 z-50 flex flex-col space-y-2 pointer-events-none">
+        <template x-for="toast in toasts" :key="toast.id">
+            <div class="pointer-events-auto px-4 py-3 rounded-2xl glass-panel shadow-xl text-xs font-medium border flex items-center space-x-2.5 transition-all transform duration-300 translate-x-0"
+                 :class="{
+                     'border-rose-500/50 text-rose-700 dark:text-rose-300': toast.type === 'success' || toast.type === 'info',
+                     'border-gray-500/50 text-gray-700 dark:text-gray-300': toast.type === 'warning',
+                     'border-red-600/50 text-red-600 dark:text-red-400': toast.type === 'error'
+                 }">
+                <i data-lucide="check" class="w-4 h-4 text-rose-500" x-show="toast.type === 'success'"></i>
+                <i data-lucide="info" class="w-4 h-4 text-rose-500" x-show="toast.type === 'info'"></i>
+                <i data-lucide="alert-triangle" class="w-4 h-4 text-gray-400" x-show="toast.type === 'warning'"></i>
+                <i data-lucide="x-circle" class="w-4 h-4 text-red-500" x-show="toast.type === 'error'"></i>
+                <span x-text="toast.message"></span>
+            </div>
+        </template>
+    </div>
+
+    <!-- Application Script -->
+    <script src="/static/js/app.js?v=2.6"></script>
+</body>
+</html>

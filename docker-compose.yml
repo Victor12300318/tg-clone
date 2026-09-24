@@ -1,0 +1,20 @@
+version: "3.8"
+
+services:
+  telegram-cloner:
+    build: .
+    container_name: tg-cloner
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8000}:8000"
+    volumes:
+      - tg-data:/app/data
+    env_file:
+      - .env
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+
+volumes:
+  tg-data:
+    driver: local

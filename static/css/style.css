@@ -1,0 +1,158 @@
+/* Apple Design & Carmine Red Palette Styles */
+
+:root {
+  --font-system: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --color-brand: #e11d48; /* Carmine Rose-600 */
+}
+
+body {
+  font-family: var(--font-system);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Glass Surfaces */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(24px) saturate(190%);
+  -webkit-backdrop-filter: blur(24px) saturate(190%);
+  border: 1px solid rgba(0, 0, 0, 0.07);
+}
+
+.dark .glass-panel {
+  background: rgba(18, 18, 22, 0.82);
+  backdrop-filter: blur(24px) saturate(190%);
+  -webkit-backdrop-filter: blur(24px) saturate(190%);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.glass-nav {
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.dark .glass-nav {
+  background: rgba(10, 10, 12, 0.88);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.glass-sidebar {
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(24px) saturate(190%);
+  -webkit-backdrop-filter: blur(24px) saturate(190%);
+  border-right: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.dark .glass-sidebar {
+  background: rgba(12, 12, 14, 0.94);
+  backdrop-filter: blur(24px) saturate(190%);
+  -webkit-backdrop-filter: blur(24px) saturate(190%);
+  border-right: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* Apple Fluid Feedback on Active (Instant Response) */
+.btn-press {
+  transition: transform 120ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 120ms ease;
+}
+
+.btn-press:active {
+  transform: scale(0.97);
+}
+
+/* Card Hover Elevation */
+.card-hover {
+  transition: transform 200ms cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 200ms ease, border-color 200ms ease;
+}
+
+.card-hover:hover {
+  transform: translateY(-2px);
+}
+
+/* Smooth Progress Bar Transitions */
+.progress-bar-fill {
+  transition: width 400ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* Terminal & Log Scrollbar */
+.terminal-scroll::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.terminal-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.terminal-scroll::-webkit-scrollbar-thumb {
+  background: rgba(156, 163, 175, 0.4);
+  border-radius: 9999px;
+}
+
+.dark .terminal-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+/* Pulse indicator (Carmine Rose) */
+@keyframes pulse-rose {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.5;
+    transform: scale(1.18);
+  }
+}
+
+.pulse-active {
+  animation: pulse-rose 2s infinite ease-in-out;
+}
+
+/* Custom Checkbox Pill Style */
+.type-pill-checkbox:checked + label {
+  background-color: #e11d48;
+  color: #ffffff;
+  border-color: #e11d48;
+  box-shadow: 0 4px 12px rgba(225, 29, 72, 0.35);
+}
+
+.dark .type-pill-checkbox:checked + label {
+  background-color: #e11d48;
+  color: #ffffff;
+  border-color: #e11d48;
+  box-shadow: 0 4px 14px rgba(225, 29, 72, 0.45);
+}
+
+/* Custom Scrollbar for Dialogs Picker */
+.picker-scroll::-webkit-scrollbar {
+  width: 5px;
+}
+.picker-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.picker-scroll::-webkit-scrollbar-thumb {
+  background: rgba(156, 163, 175, 0.3);
+  border-radius: 9999px;
+}
+.dark .picker-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* Sidebar Hover Expansion */
+.sidebar-rail {
+  transition: width 220ms cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 220ms ease;
+}
+
+/* Accessibility: Reduce Motion */
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
