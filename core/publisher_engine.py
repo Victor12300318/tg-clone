@@ -125,9 +125,17 @@ class PublisherEngine:
 
         client = await telegram_auth.get_active_client(owner_id)
         if not client:
-            await self.log(owner_id, "error", f"Telegram desconectado ao tentar publicar post '{post.name}'.")
+            await self.log(owner_id, "error", f"Conta do Telegram desconectada para o usuário #{owner_id}. Não foi possível publicar post '{post.name}'.")
             await update_post_status(post_id, PostStatus.FAILED)
             return False
+
+        if not getattr(client, "me", None) or getattr(client.me, "is_premium", None) is None:
+            try:
+                client.me = await client.get_me()
+            except Exception:
+                pass
+            if not getattr(client, "me", None) or getattr(client.me, "is_premium", None) is None:
+                client.me = type("Me", (), {"is_premium": False, "id": 0})()
 
         await update_post_status(post_id, PostStatus.PUBLISHING)
         await self.log(owner_id, "info", f"Iniciando envio do post '{post.name}' para {len(post.target_group_ids)} grupos...")

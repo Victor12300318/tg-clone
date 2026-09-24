@@ -460,6 +460,15 @@ class ClonerEngine:
             self._reupload_warned_tasks.add(task_id)
             await self.log(task_id, "info", "Canal com proteção de conteúdo detectado: utilizando re-upload.")
 
+        # Ensure client.me is set and has is_premium attribute to prevent Pyrogram save_file AttributeError
+        if not getattr(client, "me", None) or getattr(client.me, "is_premium", None) is None:
+            try:
+                client.me = await client.get_me()
+            except Exception:
+                pass
+            if not getattr(client, "me", None) or getattr(client.me, "is_premium", None) is None:
+                client.me = type("Me", (), {"is_premium": False, "id": getattr(getattr(client, "me", None), "id", 0)})()
+
         file_size = _get_media_file_size(message)
         max_bytes = REUPLOAD_MEMORY_LIMIT_MB * 1024 * 1024
         use_memory = file_size is not None and file_size <= max_bytes
@@ -720,6 +729,14 @@ class ClonerEngine:
             # Fallback to reupload if restricted
 
         # 3. Protected content fallback: download and send_media_group
+        if not getattr(client, "me", None) or getattr(client.me, "is_premium", None) is None:
+            try:
+                client.me = await client.get_me()
+            except Exception:
+                pass
+            if not getattr(client, "me", None) or getattr(client.me, "is_premium", None) is None:
+                client.me = type("Me", (), {"is_premium": False, "id": getattr(getattr(client, "me", None), "id", 0)})()
+
         temp_files: List[str] = []
         input_media: List[Any] = []
         try:
@@ -761,6 +778,14 @@ class ClonerEngine:
                 await self.log(task_id, "error", "Telegram desconectado. Conecte sua conta para iniciar.")
                 await self._set_status(task_id, TaskStatus.FAILED)
                 return
+
+            if not getattr(client, "me", None) or getattr(client.me, "is_premium", None) is None:
+                try:
+                    client.me = await client.get_me()
+                except Exception:
+                    pass
+                if not getattr(client, "me", None) or getattr(client.me, "is_premium", None) is None:
+                    client.me = type("Me", (), {"is_premium": False, "id": 0})()
 
             origin_chat = parse_chat_id(task.origin_chat)
             dest_chat = parse_chat_id(task.dest_chat)
@@ -1101,6 +1126,14 @@ class ClonerEngine:
                 await self.log(task_id, "error", "Telegram desconectado. Conecte sua conta para iniciar.")
                 await self._set_status(task_id, TaskStatus.FAILED)
                 return
+
+            if not getattr(client, "me", None) or getattr(client.me, "is_premium", None) is None:
+                try:
+                    client.me = await client.get_me()
+                except Exception:
+                    pass
+                if not getattr(client, "me", None) or getattr(client.me, "is_premium", None) is None:
+                    client.me = type("Me", (), {"is_premium": False, "id": 0})()
 
             origin_chat = parse_chat_id(task.origin_chat)
             dest_chat = parse_chat_id(task.dest_chat)

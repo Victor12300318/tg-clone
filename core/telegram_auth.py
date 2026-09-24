@@ -99,6 +99,14 @@ class TelegramAuthManager:
                     return None
 
                 await client.start()
+                if not getattr(client, "me", None):
+                    try:
+                        client.me = await client.get_me()
+                    except Exception:
+                        pass
+                if not getattr(client, "me", None) or getattr(client.me, "is_premium", None) is None:
+                    client.me = type("Me", (), {"is_premium": False, "id": account.get("tg_user_id", 0)})()
+
                 self._active_clients[owner_id] = client
 
                 # Prime in-memory peer cache so all channel access_hashes are ready
@@ -230,6 +238,7 @@ class TelegramAuthManager:
             # If sign in succeeded without 2FA
             session_str = await client.export_session_string()
             me = await client.get_me()
+            client.me = me
 
             await save_account(
                 owner_id=owner_id,
@@ -282,6 +291,7 @@ class TelegramAuthManager:
             await client.check_password(password=password)
             session_str = await client.export_session_string()
             me = await client.get_me()
+            client.me = me
 
             await save_account(
                 owner_id=owner_id,
@@ -325,6 +335,7 @@ class TelegramAuthManager:
             await client.start()
             session_str = await client.export_session_string()
             me = await client.get_me()
+            client.me = me
 
             await save_account(
                 owner_id=owner_id,
