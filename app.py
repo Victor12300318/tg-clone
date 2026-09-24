@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse
 import uvicorn
 
 from core.config import STATIC_DIR, HOST, PORT
-from core.database import init_db, get_live_tasks_all
+from core.database import init_db, get_live_tasks_all, close_db_pool
 from core.publisher_engine import publisher_engine
 from core.cloner_engine import cloner_engine
 from api.routes_auth import router as auth_router
@@ -31,6 +31,7 @@ async def lifespan(app: FastAPI):
     yield
     # Shutdown: stop background tasks
     publisher_engine.stop_scheduler_loop()
+    await close_db_pool()
 
 
 app = FastAPI(

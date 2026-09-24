@@ -97,10 +97,11 @@ async def close_db_pool() -> None:
 class PgCursorAdapter:
     """Cursor-like wrapper over asyncpg fetch results."""
 
-    def __init__(self, rows: list, lastrowid: Any = None):
+    def __init__(self, rows: list, lastrowid: Any = None, rowcount: int = 0):
         self._rows = list(rows) if rows else []
         self._index = 0
         self.lastrowid = lastrowid
+        self.rowcount = rowcount
 
     async def fetchone(self) -> Any:
         if self._index < len(self._rows):
@@ -162,10 +163,12 @@ class PgConnectionAdapter:
 
         lastrowid = None
         rows = []
+        rowcount = 0
         try:
             if is_select or has_returning:
                 records = await self._conn.fetch(clean_query, *flat_params)
                 rows = list(records)
+                rowcount = len(rows)
                 if has_returning and rows:
                     first = rows[0]
                     if "id" in first:
@@ -174,9 +177,13 @@ class PgConnectionAdapter:
                         lastrowid = first[0]
             else:
                 if flat_params:
-                    await self._conn.execute(clean_query, *flat_params)
+                    status = await self._conn.execute(clean_query, *flat_params)
                 else:
-                    await self._conn.execute(clean_query)
+                    status = await self._conn.execute(clean_query)
+                if status and isinstance(status, str):
+                    parts = status.split()
+                    if parts and parts[-1].isdigit():
+                        rowcount = int(parts[-1])
         except Exception:
             if self._tr is not None:
                 try:
@@ -186,7 +193,7 @@ class PgConnectionAdapter:
                 self._tr = None
             raise
 
-        cursor = PgCursorAdapter(rows, lastrowid=lastrowid)
+        cursor = PgCursorAdapter(rows, lastrowid=lastrowid, rowcount=rowcount)
         self._last_cursor = cursor
         return cursor
 
@@ -199,6 +206,10 @@ class PgConnectionAdapter:
         if self._tr is not None:
             await self._tr.rollback()
             self._tr = None
+
+    @property
+    def rowcount(self) -> int:
+        return self._last_cursor.rowcount if self._last_cursor else 0
 
     @property
     def lastrowid(self) -> Optional[int]:
@@ -243,6 +254,10 @@ class SqliteConnectionAdapter:
         await self._conn.close()
 
     @property
+    def rowcount(self) -> Optional[int]:
+        return self._last_cursor.rowcount if self._last_cursor else None
+
+    @property
     def lastrowid(self) -> Optional[int]:
         return self._last_cursor.lastrowid if self._last_cursor else None
 
@@ -267,7 +282,14 @@ async def get_db_connection() -> AsyncIterator[SqliteConnectionAdapter | PgConne
     Uses asyncpg pool when is_pg_mode() is True, or aiosqlite otherwise.
     """
     if not is_pg_mode():
-        async with aiosqlite.connect(config.DATABASE_PATH) as db:
+        import sys
+        core_db = sys.modules.get("core.database")
+        db_path = config.DATABASE_PATH
+        if core_db and hasattr(core_db, "DATABASE_PATH") and core_db.DATABASE_PATH != config.DATABASE_PATH:
+            from core.config import DATA_DIR
+            if config.DATABASE_PATH == DATA_DIR / "cloner.db":
+                db_path = core_db.DATABASE_PATH
+        async with aiosqlite.connect(db_path) as db:
             db.row_factory = aiosqlite.Row
             adapter = SqliteConnectionAdapter(db)
             yield adapter

@@ -3,10 +3,9 @@ import json
 import sqlite3
 from datetime import datetime
 from typing import List, Optional, Dict, Any
-from contextlib import asynccontextmanager
-import aiosqlite
 
 from core.config import DATABASE_PATH
+from core.db_adapter import get_db_connection, is_pg_mode, close_db_pool
 from core.models import (
     TaskCreate, TaskUpdate, TaskResponse, TaskStatus, TaskMode,
     TextRuleCreate, TextRuleUpdate, TextRuleResponse, LogEntry,
@@ -16,207 +15,415 @@ from core.models import (
 )
 
 
-@asynccontextmanager
-async def get_db_connection():
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        yield db
-
-
 async def init_db() -> None:
     async with get_db_connection() as db:
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                email TEXT UNIQUE NOT NULL,
-                password_hash TEXT NOT NULL,
-                subscription_active INTEGER DEFAULT 1,
-                created_at TEXT NOT NULL
-            )
-        """)
+        if is_pg_mode():
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id SERIAL PRIMARY KEY,
+                    email TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    subscription_active INTEGER DEFAULT 1,
+                    created_at TEXT NOT NULL
+                )
+            """)
 
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS accounts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                owner_id INTEGER NOT NULL,
-                type TEXT NOT NULL,
-                phone_number TEXT,
-                api_id INTEGER NOT NULL,
-                api_hash TEXT NOT NULL,
-                bot_token TEXT,
-                session_string TEXT,
-                session_name TEXT,
-                tg_user_id INTEGER,
-                username TEXT,
-                first_name TEXT,
-                is_active INTEGER DEFAULT 1,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-        """)
-        # Migrations for pre-SaaS databases
-        for stmt in (
-            "ALTER TABLE accounts RENAME COLUMN user_id TO tg_user_id",
-            "ALTER TABLE accounts ADD COLUMN owner_id INTEGER",
-            "UPDATE accounts SET owner_id = 1 WHERE owner_id IS NULL",
-        ):
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS accounts (
+                    id SERIAL PRIMARY KEY,
+                    owner_id INTEGER NOT NULL,
+                    type TEXT NOT NULL,
+                    phone_number TEXT,
+                    api_id INTEGER NOT NULL,
+                    api_hash TEXT NOT NULL,
+                    bot_token TEXT,
+                    session_string TEXT,
+                    session_name TEXT,
+                    tg_user_id INTEGER,
+                    username TEXT,
+                    first_name TEXT,
+                    is_active INTEGER DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+            for stmt in (
+                "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS owner_id INTEGER",
+                "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS tg_user_id INTEGER",
+                "UPDATE accounts SET owner_id = 1 WHERE owner_id IS NULL",
+            ):
+                try:
+                    await db.execute(stmt)
+                    await db.commit()
+                except Exception:
+                    pass
+
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS tasks (
+                    id SERIAL PRIMARY KEY,
+                    owner_id INTEGER NOT NULL DEFAULT 1,
+                    name TEXT NOT NULL,
+                    mode TEXT NOT NULL,
+                    origin_chat TEXT NOT NULL,
+                    origin_title TEXT,
+                    dest_chat TEXT NOT NULL,
+                    dest_title TEXT,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    start_message_id INTEGER DEFAULT 1,
+                    end_message_id INTEGER,
+                    current_message_id INTEGER DEFAULT 0,
+                    total_messages INTEGER DEFAULT 0,
+                    processed_messages INTEGER DEFAULT 0,
+                    copied_count INTEGER DEFAULT 0,
+                    skipped_count INTEGER DEFAULT 0,
+                    error_count INTEGER DEFAULT 0,
+                    media_types_json TEXT NOT NULL DEFAULT '["all"]',
+                    clean_forward INTEGER DEFAULT 1,
+                    delay_seconds REAL DEFAULT 10.0,
+                    skip_delay_seconds REAL DEFAULT 0.5,
+                    remove_captions INTEGER DEFAULT 0,
+                    remove_links INTEGER DEFAULT 0,
+                    remove_mentions INTEGER DEFAULT 0,
+                    header_text TEXT DEFAULT '',
+                    footer_text TEXT DEFAULT '',
+                    custom_replacements_json TEXT DEFAULT '[]',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+            for stmt in (
+                "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS remove_captions INTEGER DEFAULT 0",
+                "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS owner_id INTEGER DEFAULT 1",
+            ):
+                try:
+                    await db.execute(stmt)
+                    await db.commit()
+                except Exception:
+                    pass
+
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS task_messages (
+                    id SERIAL PRIMARY KEY,
+                    task_id INTEGER NOT NULL,
+                    origin_message_id INTEGER NOT NULL,
+                    dest_message_id INTEGER,
+                    status TEXT NOT NULL,
+                    media_type TEXT,
+                    copied_at TEXT NOT NULL,
+                    UNIQUE(task_id, origin_message_id)
+                )
+            """)
+
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS text_rules (
+                    id SERIAL PRIMARY KEY,
+                    owner_id INTEGER NOT NULL DEFAULT 1,
+                    name TEXT NOT NULL,
+                    rule_type TEXT NOT NULL DEFAULT 'replace',
+                    pattern TEXT NOT NULL,
+                    replacement TEXT NOT NULL DEFAULT '',
+                    is_regex INTEGER DEFAULT 0,
+                    enabled INTEGER DEFAULT 1,
+                    created_at TEXT NOT NULL
+                )
+            """)
             try:
-                await db.execute(stmt)
+                await db.execute("ALTER TABLE text_rules ADD COLUMN IF NOT EXISTS owner_id INTEGER DEFAULT 1")
                 await db.commit()
             except Exception:
                 pass
 
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS tasks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                owner_id INTEGER NOT NULL DEFAULT 1,
-                name TEXT NOT NULL,
-                mode TEXT NOT NULL,
-                origin_chat TEXT NOT NULL,
-                origin_title TEXT,
-                dest_chat TEXT NOT NULL,
-                dest_title TEXT,
-                status TEXT NOT NULL DEFAULT 'pending',
-                start_message_id INTEGER DEFAULT 1,
-                end_message_id INTEGER,
-                current_message_id INTEGER DEFAULT 0,
-                total_messages INTEGER DEFAULT 0,
-                processed_messages INTEGER DEFAULT 0,
-                copied_count INTEGER DEFAULT 0,
-                skipped_count INTEGER DEFAULT 0,
-                error_count INTEGER DEFAULT 0,
-                media_types_json TEXT NOT NULL DEFAULT '["all"]',
-                clean_forward INTEGER DEFAULT 1,
-                delay_seconds REAL DEFAULT 10.0,
-                skip_delay_seconds REAL DEFAULT 0.5,
-                remove_captions INTEGER DEFAULT 0,
-                remove_links INTEGER DEFAULT 0,
-                remove_mentions INTEGER DEFAULT 0,
-                header_text TEXT DEFAULT '',
-                footer_text TEXT DEFAULT '',
-                custom_replacements_json TEXT DEFAULT '[]',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-        """)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS logs (
+                    id SERIAL PRIMARY KEY,
+                    owner_id INTEGER,
+                    task_id INTEGER,
+                    level TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    timestamp TEXT NOT NULL
+                )
+            """)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS system_logs (
+                    id SERIAL PRIMARY KEY,
+                    owner_id INTEGER,
+                    task_id INTEGER,
+                    level TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    timestamp TEXT,
+                    created_at TEXT
+                )
+            """)
+            for stmt in (
+                "ALTER TABLE logs ADD COLUMN IF NOT EXISTS owner_id INTEGER",
+                "ALTER TABLE system_logs ADD COLUMN IF NOT EXISTS owner_id INTEGER",
+            ):
+                try:
+                    await db.execute(stmt)
+                    await db.commit()
+                except Exception:
+                    pass
 
-        try:
-            await db.execute("ALTER TABLE tasks ADD COLUMN remove_captions INTEGER DEFAULT 0")
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS managed_groups (
+                    id SERIAL PRIMARY KEY,
+                    owner_id INTEGER NOT NULL DEFAULT 1,
+                    chat_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    chat_type TEXT NOT NULL DEFAULT 'supergroup',
+                    is_admin INTEGER DEFAULT 0,
+                    added_at TEXT NOT NULL,
+                    UNIQUE(owner_id, chat_id)
+                )
+            """)
+            try:
+                await db.execute("ALTER TABLE managed_groups ADD COLUMN IF NOT EXISTS owner_id INTEGER DEFAULT 1")
+                await db.commit()
+            except Exception:
+                pass
+
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS posts (
+                    id SERIAL PRIMARY KEY,
+                    owner_id INTEGER NOT NULL DEFAULT 1,
+                    name TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    media_path TEXT,
+                    media_type TEXT,
+                    target_group_ids_json TEXT NOT NULL DEFAULT '[]',
+                    status TEXT NOT NULL DEFAULT 'draft',
+                    schedule_type TEXT NOT NULL DEFAULT 'now',
+                    recurrence_rule_json TEXT,
+                    run_at TEXT,
+                    next_run_at TEXT,
+                    last_run_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+            try:
+                await db.execute("ALTER TABLE posts ADD COLUMN IF NOT EXISTS owner_id INTEGER DEFAULT 1")
+                await db.commit()
+            except Exception:
+                pass
+
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS post_deliveries (
+                    id SERIAL PRIMARY KEY,
+                    post_id INTEGER NOT NULL,
+                    chat_id TEXT NOT NULL,
+                    chat_title TEXT,
+                    message_id INTEGER,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    error TEXT,
+                    sent_at TEXT NOT NULL
+                )
+            """)
             await db.commit()
-        except Exception:
-            pass
-        try:
-            await db.execute("ALTER TABLE tasks ADD COLUMN owner_id INTEGER DEFAULT 1")
+        else:
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    email TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    subscription_active INTEGER DEFAULT 1,
+                    created_at TEXT NOT NULL
+                )
+            """)
+
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS accounts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    owner_id INTEGER NOT NULL,
+                    type TEXT NOT NULL,
+                    phone_number TEXT,
+                    api_id INTEGER NOT NULL,
+                    api_hash TEXT NOT NULL,
+                    bot_token TEXT,
+                    session_string TEXT,
+                    session_name TEXT,
+                    tg_user_id INTEGER,
+                    username TEXT,
+                    first_name TEXT,
+                    is_active INTEGER DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+            # Migrations for pre-SaaS databases
+            for stmt in (
+                "ALTER TABLE accounts RENAME COLUMN user_id TO tg_user_id",
+                "ALTER TABLE accounts ADD COLUMN owner_id INTEGER",
+                "UPDATE accounts SET owner_id = 1 WHERE owner_id IS NULL",
+            ):
+                try:
+                    await db.execute(stmt)
+                    await db.commit()
+                except Exception:
+                    pass
+
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS tasks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    owner_id INTEGER NOT NULL DEFAULT 1,
+                    name TEXT NOT NULL,
+                    mode TEXT NOT NULL,
+                    origin_chat TEXT NOT NULL,
+                    origin_title TEXT,
+                    dest_chat TEXT NOT NULL,
+                    dest_title TEXT,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    start_message_id INTEGER DEFAULT 1,
+                    end_message_id INTEGER,
+                    current_message_id INTEGER DEFAULT 0,
+                    total_messages INTEGER DEFAULT 0,
+                    processed_messages INTEGER DEFAULT 0,
+                    copied_count INTEGER DEFAULT 0,
+                    skipped_count INTEGER DEFAULT 0,
+                    error_count INTEGER DEFAULT 0,
+                    media_types_json TEXT NOT NULL DEFAULT '["all"]',
+                    clean_forward INTEGER DEFAULT 1,
+                    delay_seconds REAL DEFAULT 10.0,
+                    skip_delay_seconds REAL DEFAULT 0.5,
+                    remove_captions INTEGER DEFAULT 0,
+                    remove_links INTEGER DEFAULT 0,
+                    remove_mentions INTEGER DEFAULT 0,
+                    header_text TEXT DEFAULT '',
+                    footer_text TEXT DEFAULT '',
+                    custom_replacements_json TEXT DEFAULT '[]',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+
+            try:
+                await db.execute("ALTER TABLE tasks ADD COLUMN remove_captions INTEGER DEFAULT 0")
+                await db.commit()
+            except Exception:
+                pass
+            try:
+                await db.execute("ALTER TABLE tasks ADD COLUMN owner_id INTEGER DEFAULT 1")
+                await db.commit()
+            except Exception:
+                pass
+
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS task_messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id INTEGER NOT NULL,
+                    origin_message_id INTEGER NOT NULL,
+                    dest_message_id INTEGER,
+                    status TEXT NOT NULL,
+                    media_type TEXT,
+                    copied_at TEXT NOT NULL,
+                    UNIQUE(task_id, origin_message_id)
+                )
+            """)
+
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS text_rules (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    owner_id INTEGER NOT NULL DEFAULT 1,
+                    name TEXT NOT NULL,
+                    rule_type TEXT NOT NULL DEFAULT 'replace',
+                    pattern TEXT NOT NULL,
+                    replacement TEXT NOT NULL DEFAULT '',
+                    is_regex INTEGER DEFAULT 0,
+                    enabled INTEGER DEFAULT 1,
+                    created_at TEXT NOT NULL
+                )
+            """)
+            try:
+                await db.execute("ALTER TABLE text_rules ADD COLUMN owner_id INTEGER DEFAULT 1")
+                await db.commit()
+            except Exception:
+                pass
+
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    owner_id INTEGER,
+                    task_id INTEGER,
+                    level TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    timestamp TEXT NOT NULL
+                )
+            """)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS system_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    owner_id INTEGER,
+                    task_id INTEGER,
+                    level TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    timestamp TEXT,
+                    created_at TEXT
+                )
+            """)
+            try:
+                await db.execute("ALTER TABLE logs ADD COLUMN owner_id INTEGER")
+                await db.commit()
+            except Exception:
+                pass
+
+            # ponytail: legacy single-tenant DBs keep UNIQUE(chat_id); fresh SaaS DBs
+            # scope uniqueness per owner. Recreate-table migration when legacy data matters.
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS managed_groups (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    owner_id INTEGER NOT NULL DEFAULT 1,
+                    chat_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    chat_type TEXT NOT NULL DEFAULT 'supergroup',
+                    is_admin INTEGER DEFAULT 0,
+                    added_at TEXT NOT NULL,
+                    UNIQUE(owner_id, chat_id)
+                )
+            """)
+            try:
+                await db.execute("ALTER TABLE managed_groups ADD COLUMN owner_id INTEGER DEFAULT 1")
+                await db.commit()
+            except Exception:
+                pass
+
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS posts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    owner_id INTEGER NOT NULL DEFAULT 1,
+                    name TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    media_path TEXT,
+                    media_type TEXT,
+                    target_group_ids_json TEXT NOT NULL DEFAULT '[]',
+                    status TEXT NOT NULL DEFAULT 'draft',
+                    schedule_type TEXT NOT NULL DEFAULT 'now',
+                    recurrence_rule_json TEXT,
+                    run_at TEXT,
+                    next_run_at TEXT,
+                    last_run_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+            try:
+                await db.execute("ALTER TABLE posts ADD COLUMN owner_id INTEGER DEFAULT 1")
+                await db.commit()
+            except Exception:
+                pass
+
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS post_deliveries (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    post_id INTEGER NOT NULL,
+                    chat_id TEXT NOT NULL,
+                    chat_title TEXT,
+                    message_id INTEGER,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    error TEXT,
+                    sent_at TEXT NOT NULL
+                )
+            """)
             await db.commit()
-        except Exception:
-            pass
-
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS task_messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                task_id INTEGER NOT NULL,
-                origin_message_id INTEGER NOT NULL,
-                dest_message_id INTEGER,
-                status TEXT NOT NULL,
-                media_type TEXT,
-                copied_at TEXT NOT NULL,
-                UNIQUE(task_id, origin_message_id)
-            )
-        """)
-
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS text_rules (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                owner_id INTEGER NOT NULL DEFAULT 1,
-                name TEXT NOT NULL,
-                rule_type TEXT NOT NULL DEFAULT 'replace',
-                pattern TEXT NOT NULL,
-                replacement TEXT NOT NULL DEFAULT '',
-                is_regex INTEGER DEFAULT 0,
-                enabled INTEGER DEFAULT 1,
-                created_at TEXT NOT NULL
-            )
-        """)
-        try:
-            await db.execute("ALTER TABLE text_rules ADD COLUMN owner_id INTEGER DEFAULT 1")
-            await db.commit()
-        except Exception:
-            pass
-
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                owner_id INTEGER,
-                task_id INTEGER,
-                level TEXT NOT NULL,
-                message TEXT NOT NULL,
-                timestamp TEXT NOT NULL
-            )
-        """)
-        try:
-            await db.execute("ALTER TABLE logs ADD COLUMN owner_id INTEGER")
-            await db.commit()
-        except Exception:
-            pass
-
-        # ponytail: legacy single-tenant DBs keep UNIQUE(chat_id); fresh SaaS DBs
-        # scope uniqueness per owner. Recreate-table migration when legacy data matters.
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS managed_groups (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                owner_id INTEGER NOT NULL DEFAULT 1,
-                chat_id TEXT NOT NULL,
-                title TEXT NOT NULL,
-                chat_type TEXT NOT NULL DEFAULT 'supergroup',
-                is_admin INTEGER DEFAULT 0,
-                added_at TEXT NOT NULL,
-                UNIQUE(owner_id, chat_id)
-            )
-        """)
-        try:
-            await db.execute("ALTER TABLE managed_groups ADD COLUMN owner_id INTEGER DEFAULT 1")
-            await db.commit()
-        except Exception:
-            pass
-
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS posts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                owner_id INTEGER NOT NULL DEFAULT 1,
-                name TEXT NOT NULL,
-                text TEXT NOT NULL,
-                media_path TEXT,
-                media_type TEXT,
-                target_group_ids_json TEXT NOT NULL DEFAULT '[]',
-                status TEXT NOT NULL DEFAULT 'draft',
-                schedule_type TEXT NOT NULL DEFAULT 'now',
-                recurrence_rule_json TEXT,
-                run_at TEXT,
-                next_run_at TEXT,
-                last_run_at TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-        """)
-        try:
-            await db.execute("ALTER TABLE posts ADD COLUMN owner_id INTEGER DEFAULT 1")
-            await db.commit()
-        except Exception:
-            pass
-
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS post_deliveries (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                post_id INTEGER NOT NULL,
-                chat_id TEXT NOT NULL,
-                chat_title TEXT,
-                message_id INTEGER,
-                status TEXT NOT NULL DEFAULT 'pending',
-                error TEXT,
-                sent_at TEXT NOT NULL
-            )
-        """)
-        await db.commit()
 
     # Seed or synchronize default admin user configured in .env
     await ensure_default_user()
@@ -265,8 +472,10 @@ async def create_user(email: str, password_hash: str) -> Optional[int]:
             )
             await db.commit()
             return cursor.lastrowid
-        except sqlite3.IntegrityError:
-            return None
+        except (sqlite3.IntegrityError, Exception) as e:
+            if isinstance(e, sqlite3.IntegrityError) or "unique" in str(e).lower() or "duplicate" in str(e).lower():
+                return None
+            raise
 
 
 async def get_user_by_email(email: str) -> Optional[Dict[str, Any]]:
@@ -348,7 +557,7 @@ async def clear_active_account(owner_id: int) -> None:
 
 
 # Task DB Operations
-def _row_to_task_response(row: aiosqlite.Row) -> TaskResponse:
+def _row_to_task_response(row: Any) -> TaskResponse:
     d = dict(row)
     media_types = json.loads(d.get("media_types_json") or '["all"]')
     custom_replacements = json.loads(d.get("custom_replacements_json") or '[]')
@@ -595,11 +804,23 @@ async def record_task_message(
 ) -> None:
     now = datetime.now().isoformat()
     async with get_db_connection() as db:
-        await db.execute("""
-            INSERT OR REPLACE INTO task_messages (
-                task_id, origin_message_id, dest_message_id, status, media_type, copied_at
-            ) VALUES (?, ?, ?, ?, ?, ?)
-        """, (task_id, origin_message_id, dest_message_id, status, media_type, now))
+        if is_pg_mode():
+            await db.execute("""
+                INSERT INTO task_messages (
+                    task_id, origin_message_id, dest_message_id, status, media_type, copied_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT (task_id, origin_message_id) DO UPDATE SET
+                    dest_message_id = EXCLUDED.dest_message_id,
+                    status = EXCLUDED.status,
+                    media_type = EXCLUDED.media_type,
+                    copied_at = EXCLUDED.copied_at
+            """, (task_id, origin_message_id, dest_message_id, status, media_type, now))
+        else:
+            await db.execute("""
+                INSERT OR REPLACE INTO task_messages (
+                    task_id, origin_message_id, dest_message_id, status, media_type, copied_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+            """, (task_id, origin_message_id, dest_message_id, status, media_type, now))
         await db.commit()
 
 
@@ -823,7 +1044,7 @@ async def delete_managed_group(owner_id: int, group_id: int) -> bool:
 
 
 # Posts DB Operations
-def _row_to_post_response(row: aiosqlite.Row, total_deliv: int = 0, success_deliv: int = 0) -> PostResponse:
+def _row_to_post_response(row: Any, total_deliv: int = 0, success_deliv: int = 0) -> PostResponse:
     d = dict(row)
     target_group_ids = json.loads(d.get("target_group_ids_json") or "[]")
     rec_rule_json = d.get("recurrence_rule_json")

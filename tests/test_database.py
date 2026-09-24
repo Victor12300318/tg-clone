@@ -146,3 +146,121 @@ async def test_database_lifecycle(monkeypatch):
         deleted = await delete_task(1, created_task.id)
         assert deleted is True
         assert await get_task(1, created_task.id) is None
+
+
+@pytest.mark.asyncio
+async def test_init_db_pg_mode(monkeypatch):
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from core import config
+
+    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://user:pass@localhost:5432/db")
+
+    executed_queries = []
+    mock_conn = MagicMock()
+    mock_transaction = MagicMock()
+    mock_transaction.start = AsyncMock()
+    mock_transaction.commit = AsyncMock()
+    mock_conn.transaction.return_value = mock_transaction
+
+    async def fake_execute(query, *args):
+        executed_queries.append(query)
+        return "OK"
+
+    async def fake_fetch(query, *args):
+        executed_queries.append(query)
+        if "SELECT id, email, password_hash FROM users" in query:
+            return [{"id": 1, "email": "admin@example.com", "password_hash": "hash"}]
+        return []
+
+    mock_conn.execute = AsyncMock(side_effect=fake_execute)
+    mock_conn.fetch = AsyncMock(side_effect=fake_fetch)
+
+    mock_pool = MagicMock()
+    mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
+    mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("core.db_adapter.get_pg_pool", AsyncMock(return_value=mock_pool)):
+        await init_db()
+
+    all_queries_str = "\n".join(executed_queries)
+    assert "SERIAL PRIMARY KEY" in all_queries_str
+    assert "AUTOINCREMENT" not in all_queries_str
+    for tbl in [
+        "users", "accounts", "tasks", "task_messages", "text_rules",
+        "logs", "system_logs", "managed_groups", "posts", "post_deliveries"
+    ]:
+        assert f"CREATE TABLE IF NOT EXISTS {tbl}" in all_queries_str
+
+
+@pytest.mark.asyncio
+async def test_create_user_pg_mode_unique_error(monkeypatch):
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from core import config
+    from core.database import create_user
+
+    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://user:pass@localhost:5432/db")
+
+    mock_conn = MagicMock()
+    mock_transaction = MagicMock()
+    mock_transaction.start = AsyncMock()
+    mock_conn.transaction.return_value = mock_transaction
+    mock_conn.fetch = AsyncMock(
+        side_effect=Exception("duplicate key value violates unique constraint 'users_email_key'")
+    )
+
+    mock_pool = MagicMock()
+    mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
+    mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("core.db_adapter.get_pg_pool", AsyncMock(return_value=mock_pool)):
+        user_id = await create_user("duplicate@test.com", "hash")
+        assert user_id is None
+
+
+@pytest.mark.asyncio
+async def test_record_task_message_pg_mode(monkeypatch):
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from core import config
+    from core.database import record_task_message
+
+    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://user:pass@localhost:5432/db")
+
+    mock_conn = MagicMock()
+    mock_transaction = MagicMock()
+    mock_transaction.start = AsyncMock()
+    mock_transaction.commit = AsyncMock()
+    mock_conn.transaction.return_value = mock_transaction
+
+    executed_queries = []
+
+    async def fake_fetch(query, *args):
+        executed_queries.append(query)
+        return [{"id": 1}]
+
+    mock_conn.fetch = AsyncMock(side_effect=fake_fetch)
+    mock_conn.execute = AsyncMock()
+
+    mock_pool = MagicMock()
+    mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
+    mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("core.db_adapter.get_pg_pool", AsyncMock(return_value=mock_pool)):
+        await record_task_message(task_id=1, origin_message_id=10, status="copied", dest_message_id=20)
+
+    assert len(executed_queries) == 1
+    assert "ON CONFLICT (task_id, origin_message_id) DO UPDATE SET" in executed_queries[0]
+
+
+@pytest.mark.asyncio
+async def test_app_lifespan_closes_db_pool():
+    from unittest.mock import AsyncMock, patch
+    from app import lifespan, app
+
+    with patch("app.init_db", AsyncMock()), \
+         patch("app.get_live_tasks_all", AsyncMock(return_value=[])), \
+         patch("app.publisher_engine.start_scheduler_loop"), \
+         patch("app.publisher_engine.stop_scheduler_loop"), \
+         patch("app.close_db_pool", AsyncMock()) as mock_close:
+        async with lifespan(app):
+            pass
+        mock_close.assert_awaited_once()
