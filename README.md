@@ -54,6 +54,30 @@ Documentação Swagger da API: **[http://localhost:8000/docs](http://localhost:8
 
 ---
 
+## 🐘 Banco de Dados: PostgreSQL e SQLite (Modo Híbrido)
+
+A aplicação conta com um adaptador unificado de banco de dados:
+- **Produção (PostgreSQL):** Ativado automaticamente quando a variável de ambiente `DATABASE_URL` estiver configurada (ex: `postgresql://user:pass@host:5432/dbname`).
+- **Desenvolvimento / Local (SQLite):** Fallback automático caso `DATABASE_URL` não seja informada. Os dados são salvos em `data/cloner.db`.
+
+### Configuração no EasyPanel com PostgreSQL:
+1. No seu projeto do **EasyPanel**, clique em **"+ New App"** $\rightarrow$ **"Database"** $\rightarrow$ **"PostgreSQL"**.
+2. Na aplicação do **tg-clone**, vá na aba **"Environment"** e adicione:
+   ```env
+   DATABASE_URL=${POSTGRES_URL}
+   ```
+   *(Ou insira a connection string fornecida pelo serviço do PostgreSQL no EasyPanel)*.
+3. Clique em **"Deploy"**. As tabelas serão criadas automaticamente no PostgreSQL na primeira inicialização.
+
+### Migração de Dados Existentes (SQLite $\rightarrow$ PostgreSQL):
+Se você já possui dados salvos no SQLite (`data/cloner.db`) e deseja migrá-los para o PostgreSQL:
+```bash
+python scripts/migrate_to_pg.py --sqlite data/cloner.db --pg-url "postgresql://usuario:senha@host:5432/tgclone"
+```
+O script migra usuários, contas Telegram, tarefas, regras, grupos e logs, e ajusta automaticamente as sequences do PostgreSQL.
+
+---
+
 ## 🧪 Execução de Testes
 Para rodar a suíte completa de testes automatizados:
 ```bash
