@@ -34,12 +34,12 @@ async def init_db() -> None:
                     owner_id INTEGER NOT NULL,
                     type TEXT NOT NULL,
                     phone_number TEXT,
-                    api_id INTEGER NOT NULL,
+                    api_id BIGINT NOT NULL,
                     api_hash TEXT NOT NULL,
                     bot_token TEXT,
                     session_string TEXT,
                     session_name TEXT,
-                    tg_user_id INTEGER,
+                    tg_user_id BIGINT,
                     username TEXT,
                     first_name TEXT,
                     is_active INTEGER DEFAULT 1,
@@ -49,7 +49,9 @@ async def init_db() -> None:
             """)
             for stmt in (
                 "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS owner_id INTEGER",
-                "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS tg_user_id INTEGER",
+                "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS tg_user_id BIGINT",
+                "ALTER TABLE accounts ALTER COLUMN tg_user_id TYPE BIGINT",
+                "ALTER TABLE accounts ALTER COLUMN api_id TYPE BIGINT",
                 "UPDATE accounts SET owner_id = 1 WHERE owner_id IS NULL",
             ):
                 try:
@@ -69,14 +71,14 @@ async def init_db() -> None:
                     dest_chat TEXT NOT NULL,
                     dest_title TEXT,
                     status TEXT NOT NULL DEFAULT 'pending',
-                    start_message_id INTEGER DEFAULT 1,
-                    end_message_id INTEGER,
-                    current_message_id INTEGER DEFAULT 0,
-                    total_messages INTEGER DEFAULT 0,
-                    processed_messages INTEGER DEFAULT 0,
-                    copied_count INTEGER DEFAULT 0,
-                    skipped_count INTEGER DEFAULT 0,
-                    error_count INTEGER DEFAULT 0,
+                    start_message_id BIGINT DEFAULT 1,
+                    end_message_id BIGINT,
+                    current_message_id BIGINT DEFAULT 0,
+                    total_messages BIGINT DEFAULT 0,
+                    processed_messages BIGINT DEFAULT 0,
+                    copied_count BIGINT DEFAULT 0,
+                    skipped_count BIGINT DEFAULT 0,
+                    error_count BIGINT DEFAULT 0,
                     media_types_json TEXT NOT NULL DEFAULT '["all"]',
                     clean_forward INTEGER DEFAULT 1,
                     delay_seconds REAL DEFAULT 10.0,
@@ -94,6 +96,14 @@ async def init_db() -> None:
             for stmt in (
                 "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS remove_captions INTEGER DEFAULT 0",
                 "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS owner_id INTEGER DEFAULT 1",
+                "ALTER TABLE tasks ALTER COLUMN start_message_id TYPE BIGINT",
+                "ALTER TABLE tasks ALTER COLUMN end_message_id TYPE BIGINT",
+                "ALTER TABLE tasks ALTER COLUMN current_message_id TYPE BIGINT",
+                "ALTER TABLE tasks ALTER COLUMN total_messages TYPE BIGINT",
+                "ALTER TABLE tasks ALTER COLUMN processed_messages TYPE BIGINT",
+                "ALTER TABLE tasks ALTER COLUMN copied_count TYPE BIGINT",
+                "ALTER TABLE tasks ALTER COLUMN skipped_count TYPE BIGINT",
+                "ALTER TABLE tasks ALTER COLUMN error_count TYPE BIGINT",
             ):
                 try:
                     await db.execute(stmt)
@@ -105,14 +115,23 @@ async def init_db() -> None:
                 CREATE TABLE IF NOT EXISTS task_messages (
                     id SERIAL PRIMARY KEY,
                     task_id INTEGER NOT NULL,
-                    origin_message_id INTEGER NOT NULL,
-                    dest_message_id INTEGER,
+                    origin_message_id BIGINT NOT NULL,
+                    dest_message_id BIGINT,
                     status TEXT NOT NULL,
                     media_type TEXT,
                     copied_at TEXT NOT NULL,
                     UNIQUE(task_id, origin_message_id)
                 )
             """)
+            for stmt in (
+                "ALTER TABLE task_messages ALTER COLUMN origin_message_id TYPE BIGINT",
+                "ALTER TABLE task_messages ALTER COLUMN dest_message_id TYPE BIGINT",
+            ):
+                try:
+                    await db.execute(stmt)
+                    await db.commit()
+                except Exception:
+                    pass
 
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS text_rules (
@@ -213,12 +232,17 @@ async def init_db() -> None:
                     post_id INTEGER NOT NULL,
                     chat_id TEXT NOT NULL,
                     chat_title TEXT,
-                    message_id INTEGER,
+                    message_id BIGINT,
                     status TEXT NOT NULL DEFAULT 'pending',
                     error TEXT,
                     sent_at TEXT NOT NULL
                 )
             """)
+            try:
+                await db.execute("ALTER TABLE post_deliveries ALTER COLUMN message_id TYPE BIGINT")
+                await db.commit()
+            except Exception:
+                pass
             await db.commit()
         else:
             await db.execute("""
