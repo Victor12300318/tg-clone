@@ -178,7 +178,7 @@ git commit -m "feat(database): integrar adaptador unificado em todas as operaç�
 - Consumes: `data/cloner.db` (SQLite local), `DATABASE_URL` (Postgres de destino).
 - Produces: Execução CLI com relatório de linhas transferidas e ajuste de sequences.
 
-- [ ] **Step 1: Escrever teste unitário para o extrator de dados da migração**
+- [x] **Step 1: Escrever teste unitário para o extrator de dados da migração**
 
 ```python
 import pytest
@@ -202,24 +202,24 @@ def test_extract_sqlite_data():
         assert rows[0][1] == "test@test.com"
 ```
 
-- [ ] **Step 2: Rodar teste para verificar falha**
+- [x] **Step 2: Rodar teste para verificar falha**
 
 Run: `python -m pytest tests/test_migration_script.py -v`
 Expected: FAIL
 
-- [ ] **Step 3: Implementar `scripts/migrate_to_pg.py`**
+- [x] **Step 3: Implementar `scripts/migrate_to_pg.py`**
 
 - Função de extração de tabelas de SQLite.
 - Função de inserção em lote no PostgreSQL com `ON CONFLICT (id) DO UPDATE ...`.
 - Ajuste das sequences do PostgreSQL:
   `SELECT setval(pg_get_serial_sequence('users', 'id'), COALESCE(MAX(id), 1)) FROM users;`
 
-- [ ] **Step 4: Rodar teste e validar execução**
+- [x] **Step 4: Rodar teste e validar execução**
 
 Run: `python -m pytest tests/test_migration_script.py -v`
 Expected: PASS
 
-- [ ] **Step 5: Commit do script de migração**
+- [x] **Step 5: Commit do script de migração**
 
 ```bash
 git add scripts/migrate_to_pg.py tests/test_migration_script.py
