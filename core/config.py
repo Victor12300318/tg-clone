@@ -1,5 +1,6 @@
 from pathlib import Path
 import os
+from typing import Optional
 from dotenv import load_dotenv
 
 # Paths
@@ -12,6 +13,18 @@ TMP_DIR = DATA_DIR / "tmp"
 UPLOADS_DIR = DATA_DIR / "uploads"
 STATIC_DIR = BASE_DIR / "static"
 DATABASE_PATH = DATA_DIR / "cloner.db"
+
+
+def normalize_database_url(url: Optional[str]) -> Optional[str]:
+    if not url:
+        return None
+    url = url.strip()
+    if url.startswith("postgres://"):
+        return "postgresql://" + url[len("postgres://"):]
+    return url
+
+
+DATABASE_URL = normalize_database_url(os.getenv("DATABASE_URL", ""))
 
 # Ensure runtime directories exist
 DATA_DIR.mkdir(parents=True, exist_ok=True)

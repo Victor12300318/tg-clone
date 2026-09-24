@@ -14,6 +14,14 @@ from core.database import (
 from core.models import TaskCreate, TaskUpdate, TaskMode, TaskStatus, TextRuleCreate, TextRuleUpdate
 
 
+def test_database_url_normalization(monkeypatch):
+    from core.config import normalize_database_url
+    assert normalize_database_url("postgres://user:pass@host:5432/db") == "postgresql://user:pass@host:5432/db"
+    assert normalize_database_url("postgresql://user:pass@host:5432/db") == "postgresql://user:pass@host:5432/db"
+    assert normalize_database_url("") is None
+    assert normalize_database_url(None) is None
+
+
 @pytest.mark.asyncio
 async def test_database_lifecycle(monkeypatch):
     with tempfile.TemporaryDirectory() as tmpdir:
