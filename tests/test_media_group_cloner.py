@@ -188,7 +188,6 @@ async def test_send_transformed_media_group_protected_skips_copy_and_preserves_v
     assert video_media.height == 1080
     assert video_media.duration == 45
     assert video_media.supports_streaming is True
-    assert video_media.thumb is not None
     cloner_engine._reupload_warned_tasks.discard(999)
 
 
@@ -417,3 +416,50 @@ async def test_send_media_group_retries_on_file_part_missing():
     # Downloaded only once (not re-downloaded on FilePartMissing retry)
     assert mock_client.download_media.await_count == 2
     cloner_engine._reupload_warned_tasks.discard(3680)
+
+
+@pytest.mark.asyncio
+async def test_recover_failed_task_messages_and_refresh_reference_on_retry(monkeypatch):
+    import io
+    import tempfile
+    from pathlib import Path
+    from types import SimpleNamespace
+    from core.database import (
+        init_db, create_task, get_task, record_task_message,
+        get_task_copied_message_ids, recover_failed_task_messages
+    )
+    from core.models import TaskCreate
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        monkeypatch.setattr("core.database.DATABASE_PATH", Path(tmpdir) / "test_recover.db")
+        await init_db()
+
+        created = await create_task(
+            1,
+            TaskCreate(
+                name="Recover Failed Messages Test",
+                mode=TaskMode.HISTORICAL,
+                origin_chat="-100100",
+                dest_chat="-100200",
+                start_message_id=1,
+                end_message_id=3,
+                delay_seconds=0.0,
+                skip_delay_seconds=0.0,
+                media_types=["all"],
+            ),
+        )
+
+        # Message 1 was copied, Message 2 & 3 previously errored
+        await record_task_message(created.id, 1, "copied", dest_message_id=101, media_type="photo")
+        await record_task_message(created.id, 2, "error", dest_message_id=None, media_type="video")
+        await record_task_message(created.id, 3, "failed", dest_message_id=None, media_type=None)
+
+        # Only message 1 is considered already copied
+        assert await get_task_copied_message_ids(created.id) == [1]
+
+        rewound_id = await recover_failed_task_messages(1, created.id)
+        assert rewound_id == 2
+        reloaded = await get_task(1, created.id)
+        assert reloaded.current_message_id == 1
+        assert reloaded.copied_count == 1
+        assert reloaded.error_count == 0

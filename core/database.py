@@ -896,11 +896,66 @@ async def record_task_messages_batch(
 async def get_task_copied_message_ids(task_id: int) -> List[int]:
     async with get_db_connection() as db:
         cursor = await db.execute(
-            "SELECT origin_message_id FROM task_messages WHERE task_id = ? ORDER BY origin_message_id ASC",
+            "SELECT origin_message_id FROM task_messages WHERE task_id = ? AND status IN ('copied', 'skipped') ORDER BY origin_message_id ASC",
             (task_id,)
         )
         rows = await cursor.fetchall()
         return [r["origin_message_id"] for r in rows]
+
+
+async def recover_failed_task_messages(owner_id: int, task_id: int) -> Optional[int]:
+    """
+    If a task has previously failed/errored message records in task_messages,
+    clears those error records and rewinds current_message_id to before the first failed message
+    so resuming/restarting the task retries them without duplicating copied messages.
+    Returns the rewound message ID if any failed messages were found, else None.
+    """
+    now = datetime.now().isoformat()
+    async with get_db_connection() as db:
+        cursor = await db.execute(
+            "SELECT MIN(origin_message_id) AS min_err_id, COUNT(*) AS err_cnt FROM task_messages WHERE task_id = ? AND status IN ('error', 'failed')",
+            (task_id,)
+        )
+        row = await cursor.fetchone()
+        if not row or not row["err_cnt"] or row["min_err_id"] is None:
+            return None
+
+        min_err_id = int(row["min_err_id"])
+        await db.execute(
+            "DELETE FROM task_messages WHERE task_id = ? AND status IN ('error', 'failed')",
+            (task_id,)
+        )
+
+        cursor = await db.execute(
+            "SELECT COUNT(*) AS copied_cnt FROM task_messages WHERE task_id = ? AND status = 'copied'",
+            (task_id,)
+        )
+        c_row = await cursor.fetchone()
+        copied_cnt = int(c_row["copied_cnt"] or 0) if c_row else 0
+
+        cursor = await db.execute(
+            "SELECT COUNT(*) AS skipped_cnt FROM task_messages WHERE task_id = ? AND status = 'skipped'",
+            (task_id,)
+        )
+        s_row = await cursor.fetchone()
+        skipped_cnt = int(s_row["skipped_cnt"] or 0) if s_row else 0
+
+        rewound_current = max(0, min_err_id - 1)
+        await db.execute(
+            """
+            UPDATE tasks
+            SET current_message_id = ?,
+                processed_messages = ?,
+                copied_count = ?,
+                skipped_count = ?,
+                error_count = 0,
+                updated_at = ?
+            WHERE id = ? AND owner_id = ?
+            """,
+            (rewound_current, copied_cnt + skipped_cnt, copied_cnt, skipped_cnt, now, task_id, owner_id)
+        )
+        await db.commit()
+        return min_err_id
 
 
 # Text Rules DB Operations

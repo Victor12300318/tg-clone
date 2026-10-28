@@ -22,7 +22,7 @@ from core.config import (
 from core.database import (
     get_db_connection, get_task, update_task_status, update_task_progress,
     record_task_message, record_task_messages_batch,
-    get_task_copied_message_ids, add_log
+    get_task_copied_message_ids, recover_failed_task_messages, add_log
 )
 from core.models import TaskStatus, TaskMode, TaskResponse
 from core.telegram_auth import telegram_auth
@@ -226,6 +226,9 @@ async def _ensure_client_ready(client: Client) -> None:
         client.max_concurrent_transmissions = TG_MAX_CONCURRENT_TRANSMISSIONS
         client.save_file_semaphore = asyncio.Semaphore(TG_MAX_CONCURRENT_TRANSMISSIONS)
         client.get_file_semaphore = asyncio.Semaphore(TG_MAX_CONCURRENT_TRANSMISSIONS)
+
+    if not hasattr(client, "_media_io_lock"):
+        client._media_io_lock = asyncio.Lock()
 
 
 class _DownloadedMedia:
@@ -550,19 +553,48 @@ class ClonerEngine:
         use_memory = isinstance(file_size, int) and file_size <= max_bytes
 
         msg_id = getattr(message, "id", 0)
+        current_msg = message
         temp_file_path: Optional[str] = None
         media_input: Any = None
         thumb_input: Any = None
 
+        async def _refresh_message_reference() -> None:
+            nonlocal current_msg
+            if not msg_id:
+                return
+            origin_chat_id = getattr(getattr(current_msg, "chat", None), "id", None)
+            if origin_chat_id is None:
+                t_obj = await self._load_task(task_id)
+                if t_obj:
+                    origin_chat_id = parse_chat_id(t_obj.origin_chat)
+            if origin_chat_id is None:
+                return
+            try:
+                fresh = await client.get_messages(origin_chat_id, msg_id)
+                if isinstance(fresh, list):
+                    fresh = fresh[0] if fresh else None
+                if fresh is not None and not getattr(fresh, "empty", False):
+                    current_msg = fresh
+            except FloodWait as fw:
+                await self.log(task_id, "warning", f"FloodWait ao atualizar referência da mídia {msg_id}: Aguardando {fw.value}s...")
+                await _interruptible_sleep(fw.value + 1, pause_event, cancel_event)
+            except Exception:
+                pass
+
         async def _dl_main() -> Any:
             nonlocal temp_file_path
             attempt = 0
+            io_lock = getattr(client, "_media_io_lock", None)
             while True:
                 if cancel_event and cancel_event.is_set():
                     raise asyncio.CancelledError()
                 try:
                     if use_memory:
-                        buf = await client.download_media(message, in_memory=True)
+                        if io_lock is not None:
+                            async with io_lock:
+                                buf = await client.download_media(current_msg, in_memory=True)
+                        else:
+                            buf = await client.download_media(current_msg, in_memory=True)
                         if isinstance(buf, io.BytesIO):
                             actual_size = buf.getbuffer().nbytes
                             if actual_size == 0 or (
@@ -577,11 +609,19 @@ class ClonerEngine:
                             ext = "jpg" if media_type == "photo" else ("mp4" if media_type in ("video", "animation") else "bin")
                             buf.name = f"media_{msg_id}.{ext}"
                         if buf is None:
-                            raise OSError(f"Download retornou vazio para mensagem {msg_id}")
+                            last_err = getattr(client, "_last_download_error", None)
+                            if isinstance(last_err, FloodWait):
+                                raise last_err
+                            detail = f" ({last_err})" if isinstance(last_err, BaseException) else ""
+                            raise OSError(f"Download retornou vazio para mensagem {msg_id}{detail}")
                         return buf
                     else:
                         temp_file_name = str(TMP_DIR / f"tg_tmp_{task_id}_{msg_id}")
-                        dl_res = await client.download_media(message, file_name=temp_file_name)
+                        if io_lock is not None:
+                            async with io_lock:
+                                dl_res = await client.download_media(current_msg, file_name=temp_file_name)
+                        else:
+                            dl_res = await client.download_media(current_msg, file_name=temp_file_name)
                         if isinstance(dl_res, str):
                             temp_file_path = dl_res
                             if os.path.exists(dl_res):
@@ -599,34 +639,25 @@ class ClonerEngine:
                                     temp_file_path = None
                                     raise OSError(f"Download em disco incompleto ({actual_size}/{file_size} bytes)")
                         if not dl_res:
-                            raise OSError(f"Download em disco retornou vazio para mensagem {msg_id}")
+                            last_err = getattr(client, "_last_download_error", None)
+                            if isinstance(last_err, FloodWait):
+                                raise last_err
+                            detail = f" ({last_err})" if isinstance(last_err, BaseException) else ""
+                            raise OSError(f"Download em disco retornou vazio para mensagem {msg_id}{detail}")
                         return dl_res
                 except FloodWait as e:
                     await self.log(task_id, "warning", f"FloodWait no download da mídia {msg_id}: Aguardando {e.value}s...")
                     await _interruptible_sleep(e.value + 1, pause_event, cancel_event)
-                except (OSError, TimeoutError) as e:
+                    await _refresh_message_reference()
+                except (OSError, TimeoutError, RPCError) as e:
                     attempt += 1
                     if attempt >= 3:
                         raise RuntimeError(f"Falha ao baixar mídia da mensagem {msg_id} após {attempt} tentativas: {e}") from e
                     await _interruptible_sleep(1.5 * attempt, pause_event, cancel_event)
+                    await _refresh_message_reference()
 
-        async def _dl_thumb(thumb_fid: str) -> Any:
-            try:
-                t_buf = await client.download_media(thumb_fid, in_memory=True)
-                if isinstance(t_buf, io.BytesIO) and t_buf.getbuffer().nbytes == 0:
-                    t_buf.close()
-                    return None
-                if t_buf is not None and hasattr(t_buf, "name") and not t_buf.name:
-                    t_buf.name = f"thumb_{msg_id}.jpg"
-                return t_buf
-            except Exception:
-                return None
-
-        # Sequential download on the persistent media session prevents TCPTransport collisions
+        # Sequential download serialized via _media_io_lock prevents TCPTransport collisions
         media_input = await _dl_main()
-        thumb_file_id = _get_video_thumb_file_id(message) if media_type == "video" else None
-        if thumb_file_id:
-            thumb_input = await _dl_thumb(thumb_file_id)
 
         if not media_input:
             if thumb_input and hasattr(thumb_input, "close"):
@@ -705,80 +736,89 @@ class ClonerEngine:
                 cancel_event=cancel_event,
             )
 
+        io_lock = getattr(client, "_media_io_lock", None)
+
+        async def _do_send_single(media_input: Any) -> Optional[Message]:
+            if media_type == "photo":
+                return await client.send_photo(chat_id=dest_chat, photo=media_input, caption=caption)
+            elif media_type == "video":
+                duration = _int_attr(getattr(message, "video", None), "duration", 0)
+                width = _int_attr(getattr(message, "video", None), "width", 0)
+                height = _int_attr(getattr(message, "video", None), "height", 0)
+                video_kwargs: Dict[str, Any] = {
+                    "chat_id": dest_chat,
+                    "video": media_input,
+                    "caption": caption,
+                    "duration": duration,
+                    "width": width,
+                    "height": height,
+                    "supports_streaming": True,
+                }
+                if downloaded.thumb_input is not None:
+                    video_kwargs["thumb"] = downloaded.thumb_input
+                return await client.send_video(**video_kwargs)
+            elif media_type == "document":
+                file_name = _str_attr(getattr(message, "document", None), "file_name", None)
+                return await client.send_document(
+                    chat_id=dest_chat,
+                    document=media_input,
+                    caption=caption,
+                    file_name=file_name
+                )
+            elif media_type == "audio":
+                title = _str_attr(getattr(message, "audio", None), "title", None)
+                performer = _str_attr(getattr(message, "audio", None), "performer", None)
+                duration = _int_attr(getattr(message, "audio", None), "duration", 0)
+                return await client.send_audio(
+                    chat_id=dest_chat,
+                    audio=media_input,
+                    caption=caption,
+                    title=title,
+                    performer=performer,
+                    duration=duration
+                )
+            elif media_type == "voice":
+                duration = _int_attr(getattr(message, "voice", None), "duration", 0)
+                return await client.send_voice(
+                    chat_id=dest_chat,
+                    voice=media_input,
+                    caption=caption,
+                    duration=duration
+                )
+            elif media_type == "animation":
+                return await client.send_animation(
+                    chat_id=dest_chat,
+                    animation=media_input,
+                    caption=caption
+                )
+            elif media_type == "sticker":
+                return await client.send_sticker(
+                    chat_id=dest_chat,
+                    sticker=media_input
+                )
+            elif media_type == "video_note":
+                duration = _int_attr(getattr(message, "video_note", None), "duration", 0)
+                return await client.send_video_note(
+                    chat_id=dest_chat,
+                    video_note=media_input,
+                    duration=duration
+                )
+            else:
+                return await client.send_document(
+                    chat_id=dest_chat,
+                    document=media_input,
+                    caption=caption
+                )
+
         try:
             while True:
                 media_input = downloaded.media_input
                 try:
-                    if media_type == "photo":
-                        return await client.send_photo(chat_id=dest_chat, photo=media_input, caption=caption)
-                    elif media_type == "video":
-                        duration = _int_attr(getattr(message, "video", None), "duration", 0)
-                        width = _int_attr(getattr(message, "video", None), "width", 0)
-                        height = _int_attr(getattr(message, "video", None), "height", 0)
-                        video_kwargs: Dict[str, Any] = {
-                            "chat_id": dest_chat,
-                            "video": media_input,
-                            "caption": caption,
-                            "duration": duration,
-                            "width": width,
-                            "height": height,
-                            "supports_streaming": True,
-                        }
-                        if downloaded.thumb_input is not None:
-                            video_kwargs["thumb"] = downloaded.thumb_input
-                        return await client.send_video(**video_kwargs)
-                    elif media_type == "document":
-                        file_name = _str_attr(getattr(message, "document", None), "file_name", None)
-                        return await client.send_document(
-                            chat_id=dest_chat,
-                            document=media_input,
-                            caption=caption,
-                            file_name=file_name
-                        )
-                    elif media_type == "audio":
-                        title = _str_attr(getattr(message, "audio", None), "title", None)
-                        performer = _str_attr(getattr(message, "audio", None), "performer", None)
-                        duration = _int_attr(getattr(message, "audio", None), "duration", 0)
-                        return await client.send_audio(
-                            chat_id=dest_chat,
-                            audio=media_input,
-                            caption=caption,
-                            title=title,
-                            performer=performer,
-                            duration=duration
-                        )
-                    elif media_type == "voice":
-                        duration = _int_attr(getattr(message, "voice", None), "duration", 0)
-                        return await client.send_voice(
-                            chat_id=dest_chat,
-                            voice=media_input,
-                            caption=caption,
-                            duration=duration
-                        )
-                    elif media_type == "animation":
-                        return await client.send_animation(
-                            chat_id=dest_chat,
-                            animation=media_input,
-                            caption=caption
-                        )
-                    elif media_type == "sticker":
-                        return await client.send_sticker(
-                            chat_id=dest_chat,
-                            sticker=media_input
-                        )
-                    elif media_type == "video_note":
-                        duration = _int_attr(getattr(message, "video_note", None), "duration", 0)
-                        return await client.send_video_note(
-                            chat_id=dest_chat,
-                            video_note=media_input,
-                            duration=duration
-                        )
+                    if io_lock is not None:
+                        async with io_lock:
+                            return await _do_send_single(media_input)
                     else:
-                        return await client.send_document(
-                            chat_id=dest_chat,
-                            document=media_input,
-                            caption=caption
-                        )
+                        return await _do_send_single(media_input)
                 except FloodWait as e:
                     await self.log(task_id, "warning", f"FloodWait no upload da mensagem {message.id}: Aguardando {e.value}s...")
                     await _interruptible_sleep(e.value + 1, pause_event, cancel_event)
@@ -1021,10 +1061,15 @@ class ClonerEngine:
             if not input_media:
                 return []
 
+            io_lock = getattr(client, "_media_io_lock", None)
             upload_attempts = 0
             while True:
                 try:
-                    return await client.send_media_group(chat_id=dest_chat, media=input_media)
+                    if io_lock is not None:
+                        async with io_lock:
+                            return await client.send_media_group(chat_id=dest_chat, media=input_media)
+                    else:
+                        return await client.send_media_group(chat_id=dest_chat, media=input_media)
                 except FloodWait as e:
                     await self.log(task.id, "warning", f"FloodWait no envio de álbum: Aguardando {e.value}s...")
                     if pause_event and cancel_event:
@@ -1185,6 +1230,21 @@ class ClonerEngine:
             await self._progress(task_id, total_messages=total_msgs)
 
             already_copied_ids = set(await get_task_copied_message_ids(task_id))
+
+            # Auto-recover any previously failed/errored messages so resuming retries them
+            owner_id = self._owner_of(task_id)
+            if owner_id is not None:
+                rewound_to = await recover_failed_task_messages(owner_id, task_id)
+                if rewound_to is not None:
+                    reloaded = await self._load_task(task_id)
+                    if reloaded:
+                        task = reloaded
+                    await self.log(
+                        task_id,
+                        "info",
+                        f"Reprocessando mensagens com falha anterior a partir do ID {rewound_to} (mensagens já copiadas serão preservadas)."
+                    )
+
             copied_count = task.copied_count
             skipped_count = task.skipped_count
             error_count = task.error_count

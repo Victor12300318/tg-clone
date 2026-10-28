@@ -57,22 +57,41 @@ def _sync_telegram_clock():
 _sync_telegram_clock()
 
 
-async def _get_or_create_media_session(client: Client, dc_id: int, force_new: bool = False):
+def _is_session_transport_closed(session) -> bool:
+    conn = getattr(session, "connection", None)
+    proto = getattr(conn, "protocol", None) if conn else None
+    if not proto:
+        return True
+    if getattr(proto, "closed", False):
+        return True
+    writer = getattr(proto, "writer", None)
+    if writer is not None and hasattr(writer, "is_closing") and writer.is_closing():
+        return True
+    return False
+
+
+async def _get_or_create_media_session(
+    client: Client,
+    dc_id: int,
+    force_new: bool = False,
+    invalidate_auth: bool = False,
+):
     """
     Reuses a persistent MTProto media Session per dc_id in client.media_sessions
-    instead of opening/closing a new TCP connection and running DH Auth + ExportAuthorization
-    on every single file download (which causes Telegram DCs to drop TCPTransport).
+    and caches foreign-DC auth_keys on client._dc_auth_keys so socket reconnects
+    do not spam DH Auth + ExportAuthorization.
     """
     import pyrogram.client as pc
     from pyrogram.errors import AuthBytesInvalid
 
+    if not hasattr(client, "_dc_auth_keys"):
+        client._dc_auth_keys = {}
+
     async with client.media_sessions_lock:
         existing = client.media_sessions.get(dc_id)
         if existing is not None:
-            conn = getattr(existing, "connection", None)
-            proto = getattr(conn, "protocol", None) if conn else None
-            is_closed = bool(getattr(proto, "closed", False)) if proto else True
-            if not force_new and existing.is_started.is_set() and not is_closed:
+            is_closed = _is_session_transport_closed(existing)
+            if not force_new and not invalidate_auth and existing.is_started.is_set() and not is_closed:
                 return existing
 
             client.media_sessions.pop(dc_id, None)
@@ -83,8 +102,16 @@ async def _get_or_create_media_session(client: Client, dc_id: int, force_new: bo
 
         home_dc = await client.storage.dc_id()
         test_mode = await client.storage.test_mode()
+
+        if invalidate_auth:
+            client._dc_auth_keys.pop(dc_id, None)
+
+        need_import_auth = False
         if dc_id != home_dc:
-            auth_key = await pc.Auth(client, dc_id, test_mode).create()
+            auth_key = client._dc_auth_keys.get(dc_id)
+            if not auth_key:
+                auth_key = await pc.Auth(client, dc_id, test_mode).create()
+                need_import_auth = True
         else:
             auth_key = await client.storage.auth_key()
 
@@ -98,11 +125,16 @@ async def _get_or_create_media_session(client: Client, dc_id: int, force_new: bo
         session._is_pooled_download = True
         await session.start()
 
-        if dc_id != home_dc:
+        if dc_id != home_dc and need_import_auth:
             for _ in range(3):
-                exported_auth = await client.invoke(
-                    pc.raw.functions.auth.ExportAuthorization(dc_id=dc_id)
-                )
+                while True:
+                    try:
+                        exported_auth = await client.invoke(
+                            pc.raw.functions.auth.ExportAuthorization(dc_id=dc_id)
+                        )
+                        break
+                    except FloodWait as fw:
+                        await asyncio.sleep(fw.value + 1)
                 try:
                     await session.invoke(
                         pc.raw.functions.auth.ImportAuthorization(
@@ -113,6 +145,7 @@ async def _get_or_create_media_session(client: Client, dc_id: int, force_new: bo
                 except AuthBytesInvalid:
                     continue
                 else:
+                    client._dc_auth_keys[dc_id] = auth_key
                     break
             else:
                 await session.stop()
@@ -133,12 +166,16 @@ def _patch_pyrogram_media_sessions():
     import io
     import math
     import re
+    import shutil
     from hashlib import md5
     from pathlib import PurePath
     import pyrogram.client as pc
     import pyrogram.session.session as ss
     from pyrogram import raw, types, utils
-    from pyrogram.errors import InternalServerError, ServiceUnavailable, FilePartMissing
+    from pyrogram.errors import (
+        InternalServerError, ServiceUnavailable, FilePartMissing,
+        FileMigrate, RPCError
+    )
     from pyrogram.methods import Methods
 
     if getattr(pc.Client, "_tg_clone_patched", False):
@@ -191,9 +228,7 @@ def _patch_pyrogram_media_sessions():
                         if not hasattr(self, "_restart_lock"):
                             self._restart_lock = asyncio.Lock()
                         async with self._restart_lock:
-                            conn = getattr(self, "connection", None)
-                            proto = getattr(conn, "protocol", None) if conn else None
-                            if not proto or getattr(proto, "closed", False) or not self.is_started.is_set():
+                            if _is_session_transport_closed(self) or not self.is_started.is_set():
                                 try:
                                     await self.restart()
                                 except Exception:
@@ -267,8 +302,9 @@ def _patch_pyrogram_media_sessions():
             session = await _get_or_create_media_session(self, dc_id, force_new=False)
 
             async def _fetch_chunk(cur_offset: int):
-                nonlocal session
-                for attempt in range(3):
+                nonlocal session, dc_id
+                attempt = 0
+                while True:
                     try:
                         return await session.invoke(
                             pc.raw.functions.upload.GetFile(
@@ -276,13 +312,27 @@ def _patch_pyrogram_media_sessions():
                                 offset=cur_offset,
                                 limit=chunk_size,
                             ),
-                            sleep_threshold=30,
+                            sleep_threshold=60,
                         )
-                    except (OSError, TimeoutError):
-                        if attempt == 2:
+                    except FloodWait as fw:
+                        await asyncio.sleep(fw.value + 1)
+                    except FileMigrate as fm:
+                        dc_id = fm.value
+                        session = await _get_or_create_media_session(self, dc_id, force_new=False)
+                    except (OSError, TimeoutError, RPCError) as err:
+                        err_upper = f"{err.__class__.__name__} {err}".upper()
+                        # If file_reference expired/invalid, fail fast without destroying the media session
+                        # so _download_single_media can re-fetch the Message with a fresh file_reference!
+                        if "FILE_REFERENCE" in err_upper:
                             raise
-                        await asyncio.sleep(1.0 * (attempt + 1))
-                        session = await _get_or_create_media_session(self, dc_id, force_new=True)
+                        attempt += 1
+                        if attempt >= 3:
+                            raise
+                        need_reauth = "AUTH_KEY" in err_upper or "AUTH_BYTES" in err_upper or "401" in err_upper
+                        await asyncio.sleep(1.0 * attempt)
+                        session = await _get_or_create_media_session(
+                            self, dc_id, force_new=True, invalidate_auth=need_reauth
+                        )
 
             try:
                 r = await _fetch_chunk(offset_bytes)
@@ -391,16 +441,65 @@ def _patch_pyrogram_media_sessions():
             except pyrogram.StopTransmission:
                 raise
             except Exception as e:
-                # Evict broken media session so next file gets a clean connection and re-raise
-                async with self.media_sessions_lock:
-                    dead = self.media_sessions.pop(dc_id, None)
-                if dead is not None:
+                err_upper = f"{e.__class__.__name__} {e}".upper()
+                # Only evict the media session on transport/auth errors, NEVER on FILE_REFERENCE_EXPIRED
+                if "FILE_REFERENCE" not in err_upper and not isinstance(e, FloodWait):
+                    async with self.media_sessions_lock:
+                        dead = self.media_sessions.pop(dc_id, None)
+                    if dead is not None:
+                        try:
+                            await dead.stop()
+                        except Exception:
+                            pass
+                raise
+
+    async def _patched_handle_download(self: Client, packet):
+        """
+        Patched handle_download that preserves the underlying exception on self._last_download_error
+        and re-raises FloodWait instead of swallowing all errors into None.
+        """
+        file_id, directory, file_name, in_memory, file_size, progress, progress_args = packet
+
+        if not in_memory:
+            os.makedirs(directory, exist_ok=True)
+        temp_file_path = os.path.abspath(re.sub("\\\\", "/", os.path.join(directory, file_name))) + ".temp"
+        file = io.BytesIO() if in_memory else open(temp_file_path, "wb")
+
+        self._last_download_error = None
+        try:
+            async for chunk in self.get_file(file_id, file_size, 0, 0, progress, progress_args):
+                file.write(chunk)
+        except BaseException as e:
+            self._last_download_error = e
+            if not in_memory:
+                try:
+                    file.close()
+                except Exception:
+                    pass
+                if os.path.exists(temp_file_path):
                     try:
-                        await dead.stop()
+                        os.remove(temp_file_path)
                     except Exception:
                         pass
-                pc.log.exception(e)
-                raise
+            else:
+                try:
+                    file.close()
+                except Exception:
+                    pass
+
+            if isinstance(e, (asyncio.CancelledError, FloodWait)):
+                raise e
+
+            return None
+        else:
+            if in_memory:
+                file.name = file_name
+                return file
+            else:
+                file.close()
+                file_path = os.path.splitext(temp_file_path)[0]
+                shutil.move(temp_file_path, file_path)
+                return file_path
 
     async def _patched_save_file(
         self: Client,
@@ -907,6 +1006,7 @@ def _patch_pyrogram_media_sessions():
 
     ss.Session.invoke = _patched_session_invoke
     pc.Client.get_file = _patched_get_file
+    pc.Client.handle_download = _patched_handle_download
     pc.Client.save_file = _patched_save_file
     pc.Client.send_media_group = _patched_send_media_group
     Methods.save_file = _patched_save_file

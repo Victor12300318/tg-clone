@@ -45,9 +45,9 @@ REUPLOAD_MEMORY_LIMIT_MB = int(os.getenv("REUPLOAD_MEMORY_LIMIT_MB", "256"))  # 
 # without flooding Telegram DCs with concurrent TCP media handshakes (<TCPTransport closed=True>).
 TG_WORKERS = int(os.getenv("TG_WORKERS", "16"))
 TG_MAX_CONCURRENT_TRANSMISSIONS = int(os.getenv("TG_MAX_CONCURRENT_TRANSMISSIONS", "1"))
-CLONER_FETCH_BATCH_SIZE = int(os.getenv("CLONER_FETCH_BATCH_SIZE", "200"))
+CLONER_FETCH_BATCH_SIZE = int(os.getenv("CLONER_FETCH_BATCH_SIZE", "25"))
 CLONER_PREFETCH_CONCURRENCY = int(os.getenv("CLONER_PREFETCH_CONCURRENCY", "1"))
-CLONER_PREFETCH_QUEUE_SIZE = int(os.getenv("CLONER_PREFETCH_QUEUE_SIZE", "2"))
+CLONER_PREFETCH_QUEUE_SIZE = int(os.getenv("CLONER_PREFETCH_QUEUE_SIZE", "1"))
 CLONER_DB_BATCH_SIZE = int(os.getenv("CLONER_DB_BATCH_SIZE", "25"))
 
 # Server config
