@@ -848,6 +848,51 @@ async def record_task_message(
         await db.commit()
 
 
+async def record_task_messages_batch(
+    task_id: int,
+    records: List[Dict[str, Any]]
+) -> None:
+    """Inserts or updates multiple task_messages records in a single DB transaction."""
+    if not records:
+        return
+    now = datetime.now().isoformat()
+    async with get_db_connection() as db:
+        if is_pg_mode():
+            for rec in records:
+                await db.execute("""
+                    INSERT INTO task_messages (
+                        task_id, origin_message_id, dest_message_id, status, media_type, copied_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT (task_id, origin_message_id) DO UPDATE SET
+                        dest_message_id = EXCLUDED.dest_message_id,
+                        status = EXCLUDED.status,
+                        media_type = EXCLUDED.media_type,
+                        copied_at = EXCLUDED.copied_at
+                """, (
+                    task_id,
+                    rec["origin_message_id"],
+                    rec.get("dest_message_id"),
+                    rec["status"],
+                    rec.get("media_type"),
+                    now
+                ))
+        else:
+            for rec in records:
+                await db.execute("""
+                    INSERT OR REPLACE INTO task_messages (
+                        task_id, origin_message_id, dest_message_id, status, media_type, copied_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                """, (
+                    task_id,
+                    rec["origin_message_id"],
+                    rec.get("dest_message_id"),
+                    rec["status"],
+                    rec.get("media_type"),
+                    now
+                ))
+        await db.commit()
+
+
 async def get_task_copied_message_ids(task_id: int) -> List[int]:
     async with get_db_connection() as db:
         cursor = await db.execute(

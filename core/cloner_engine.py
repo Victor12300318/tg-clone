@@ -11,9 +11,17 @@ from pyrogram import Client, filters, enums
 from pyrogram.types import Message, InputMediaPhoto, InputMediaVideo, InputMediaDocument, InputMediaAudio
 from pyrogram.errors import FloodWait, ChannelInvalid, PeerIdInvalid, RPCError
 
-from core.config import TMP_DIR, REUPLOAD_MEMORY_LIMIT_MB
+from core.config import (
+    TMP_DIR, REUPLOAD_MEMORY_LIMIT_MB,
+    TG_MAX_CONCURRENT_TRANSMISSIONS,
+    CLONER_FETCH_BATCH_SIZE,
+    CLONER_PREFETCH_CONCURRENCY,
+    CLONER_PREFETCH_QUEUE_SIZE,
+    CLONER_DB_BATCH_SIZE,
+)
 from core.database import (
-    get_db_connection, get_task, update_task_status, update_task_progress, record_task_message,
+    get_db_connection, get_task, update_task_status, update_task_progress,
+    record_task_message, record_task_messages_batch,
     get_task_copied_message_ids, add_log
 )
 from core.models import TaskStatus, TaskMode, TaskResponse
@@ -82,17 +90,6 @@ def apply_text_transformations(
 
     # 4. Cleanup extra whitespace
     result = re.sub(r'\n{3,}', '\n\n', result).strip()
-
-    # 5. Header and Footer
-    parts = []
-    if header_text and header_text.strip():
-        parts.append(header_text.strip())
-    if result:
-        parts.append(result)
-    if footer_text and footer_text.strip():
-        parts.append(footer_text.strip())
-
-    return "\n\n".join(parts) if parts else None
 
     # 5. Header and Footer
     parts = []
@@ -178,6 +175,98 @@ def _is_forwards_restricted(exc: Exception) -> bool:
         or "ChatForwardsRestricted" in exc_name
         or "restricts forwarding" in exc_str.lower()
     )
+
+
+def _has_protected_content(obj: Any) -> bool:
+    """Safely returns True only when has_protected_content is explicitly True."""
+    return getattr(obj, "has_protected_content", False) is True
+
+
+def _int_attr(obj: Any, attr: str, default: int = 0) -> int:
+    """Safely extracts an integer attribute from a Pyrogram media object."""
+    if not obj or isinstance(obj, bool):
+        return default
+    val = getattr(obj, attr, default)
+    return val if isinstance(val, int) and not isinstance(val, bool) else default
+
+
+def _str_attr(obj: Any, attr: str, default: Optional[str] = None) -> Optional[str]:
+    """Safely extracts a string attribute from a Pyrogram media object."""
+    if not obj or isinstance(obj, bool):
+        return default
+    val = getattr(obj, attr, default)
+    return val if isinstance(val, str) else default
+
+
+def _get_video_thumb_file_id(message: Message) -> Optional[str]:
+    """Extracts the first thumbnail file_id of a video message if available."""
+    video = getattr(message, "video", None)
+    if not video or isinstance(video, bool):
+        return None
+    thumbs = getattr(video, "thumbs", None)
+    if not isinstance(thumbs, (list, tuple)) or not thumbs:
+        return None
+    first_thumb = thumbs[0]
+    file_id = getattr(first_thumb, "file_id", None)
+    return file_id if isinstance(file_id, str) and file_id else None
+
+
+async def _ensure_client_ready(client: Client) -> None:
+    """Ensures client.me is populated and boosts concurrent file transmission semaphores."""
+    if not getattr(client, "me", None) or getattr(client.me, "is_premium", None) is None:
+        try:
+            client.me = await client.get_me()
+        except Exception:
+            pass
+        if not getattr(client, "me", None) or getattr(client.me, "is_premium", None) is None:
+            client.me = type("Me", (), {"is_premium": False, "id": getattr(getattr(client, "me", None), "id", 0)})()
+
+    curr_limit = getattr(client, "max_concurrent_transmissions", None)
+    if isinstance(curr_limit, int) and curr_limit < TG_MAX_CONCURRENT_TRANSMISSIONS:
+        client.max_concurrent_transmissions = TG_MAX_CONCURRENT_TRANSMISSIONS
+        client.save_file_semaphore = asyncio.Semaphore(TG_MAX_CONCURRENT_TRANSMISSIONS)
+        client.get_file_semaphore = asyncio.Semaphore(TG_MAX_CONCURRENT_TRANSMISSIONS)
+
+
+class _DownloadedMedia:
+    """Holds a downloaded media buffer/file and optional thumbnail with guaranteed cleanup."""
+    __slots__ = ("media_input", "temp_file_path", "use_memory", "thumb_input", "thumb_temp_path")
+
+    def __init__(
+        self,
+        media_input: Any,
+        temp_file_path: Optional[str] = None,
+        use_memory: bool = False,
+        thumb_input: Any = None,
+        thumb_temp_path: Optional[str] = None,
+    ):
+        self.media_input = media_input
+        self.temp_file_path = temp_file_path
+        self.use_memory = use_memory
+        self.thumb_input = thumb_input
+        self.thumb_temp_path = thumb_temp_path
+
+    def rewind(self) -> None:
+        for buf in (self.media_input, self.thumb_input):
+            if buf is not None and hasattr(buf, "seek"):
+                try:
+                    buf.seek(0)
+                except Exception:
+                    pass
+
+    def cleanup(self) -> None:
+        for f_path in (self.temp_file_path, self.thumb_temp_path):
+            if f_path and isinstance(f_path, str) and os.path.exists(f_path):
+                try:
+                    os.remove(f_path)
+                except Exception:
+                    pass
+        for buf in (self.media_input, self.thumb_input):
+            if buf is not None and hasattr(buf, "close"):
+                try:
+                    buf.close()
+                except Exception:
+                    pass
 
 
 class TaskPausedDuringWait(Exception):
@@ -441,6 +530,120 @@ class ClonerEngine:
         self._task_owners.pop(task_id, None)
         return True
 
+    async def _download_single_media(
+        self,
+        client: Client,
+        message: Message,
+        media_type: str,
+        task_id: int,
+        pause_event: Optional[asyncio.Event] = None,
+        cancel_event: Optional[asyncio.Event] = None,
+    ) -> _DownloadedMedia:
+        """Downloads a single message's media (and video thumbnail if available), retrying on FloodWait."""
+        await _ensure_client_ready(client)
+
+        file_size = _get_media_file_size(message)
+        max_bytes = REUPLOAD_MEMORY_LIMIT_MB * 1024 * 1024
+        use_memory = isinstance(file_size, int) and file_size <= max_bytes
+
+        msg_id = getattr(message, "id", 0)
+        temp_file_path: Optional[str] = None
+        media_input: Any = None
+        thumb_input: Any = None
+
+        async def _dl_main() -> Any:
+            nonlocal temp_file_path
+            while True:
+                if cancel_event and cancel_event.is_set():
+                    raise asyncio.CancelledError()
+                try:
+                    if use_memory:
+                        buf = await client.download_media(message, in_memory=True)
+                        if buf is not None and hasattr(buf, "name") and not buf.name:
+                            ext = "jpg" if media_type == "photo" else ("mp4" if media_type in ("video", "animation") else "bin")
+                            buf.name = f"media_{msg_id}.{ext}"
+                        return buf
+                    else:
+                        temp_file_name = str(TMP_DIR / f"tg_tmp_{task_id}_{msg_id}")
+                        dl_res = await client.download_media(message, file_name=temp_file_name)
+                        if isinstance(dl_res, str):
+                            temp_file_path = dl_res
+                        return dl_res
+                except FloodWait as e:
+                    await self.log(task_id, "warning", f"FloodWait no download da mídia {msg_id}: Aguardando {e.value}s...")
+                    await _interruptible_sleep(e.value + 1, pause_event, cancel_event)
+
+        async def _dl_thumb(thumb_fid: str) -> Any:
+            try:
+                t_buf = await client.download_media(thumb_fid, in_memory=True)
+                if t_buf is not None and hasattr(t_buf, "name") and not t_buf.name:
+                    t_buf.name = f"thumb_{msg_id}.jpg"
+                return t_buf
+            except Exception:
+                return None
+
+        thumb_file_id = _get_video_thumb_file_id(message) if media_type == "video" else None
+        if thumb_file_id:
+            media_input, thumb_input = await asyncio.gather(_dl_main(), _dl_thumb(thumb_file_id))
+        else:
+            media_input = await _dl_main()
+
+        if not media_input:
+            if thumb_input and hasattr(thumb_input, "close"):
+                try:
+                    thumb_input.close()
+                except Exception:
+                    pass
+            raise RuntimeError(f"Falha ao baixar mídia da mensagem {msg_id} para re-upload.")
+
+        return _DownloadedMedia(
+            media_input=media_input,
+            temp_file_path=temp_file_path,
+            use_memory=use_memory,
+            thumb_input=thumb_input,
+        )
+
+    async def _download_album_media(
+        self,
+        client: Client,
+        media_group: List[Message],
+        task_id: int,
+        pause_event: Optional[asyncio.Event] = None,
+        cancel_event: Optional[asyncio.Event] = None,
+    ) -> List[_DownloadedMedia]:
+        """Downloads all media items of an album concurrently using asyncio.gather."""
+        await _ensure_client_ready(client)
+
+        async def _dl_one(msg: Message) -> _DownloadedMedia:
+            m_type = detect_media_type(msg)
+            return await self._download_single_media(
+                client=client,
+                message=msg,
+                media_type=m_type,
+                task_id=task_id,
+                pause_event=pause_event,
+                cancel_event=cancel_event,
+            )
+
+        tasks = [asyncio.create_task(_dl_one(m)) for m in media_group]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        downloaded_list: List[_DownloadedMedia] = []
+        first_exc: Optional[BaseException] = None
+        for res in results:
+            if isinstance(res, BaseException):
+                if first_exc is None:
+                    first_exc = res
+            elif isinstance(res, _DownloadedMedia):
+                downloaded_list.append(res)
+
+        if first_exc is not None:
+            for item in downloaded_list:
+                item.cleanup()
+            raise first_exc
+
+        return downloaded_list
+
     async def _send_media_via_reupload(
         self,
         client: Client,
@@ -448,125 +651,111 @@ class ClonerEngine:
         dest_chat: Any,
         caption: Optional[str],
         media_type: str,
-        task_id: int
+        task_id: int,
+        downloaded: Optional[_DownloadedMedia] = None,
+        pause_event: Optional[asyncio.Event] = None,
+        cancel_event: Optional[asyncio.Event] = None,
     ) -> Optional[Message]:
         """
-        Downloads the media and re-uploads it as a fresh message to bypass
-        Telegram's CHAT_FORWARDS_RESTRICTED content protection.
-        Uses in-memory RAM buffer if file size <= REUPLOAD_MEMORY_LIMIT_MB,
-        otherwise uses temporary disk storage in TMP_DIR with guaranteed cleanup.
+        Downloads the media (or uses a prefetched buffer) and re-uploads it as a fresh
+        message to bypass Telegram's CHAT_FORWARDS_RESTRICTED content protection.
         """
         if task_id not in self._reupload_warned_tasks:
             self._reupload_warned_tasks.add(task_id)
             await self.log(task_id, "info", "Canal com proteção de conteúdo detectado: utilizando re-upload.")
 
-        # Ensure client.me is set and has is_premium attribute to prevent Pyrogram save_file AttributeError
-        if not getattr(client, "me", None) or getattr(client.me, "is_premium", None) is None:
-            try:
-                client.me = await client.get_me()
-            except Exception:
-                pass
-            if not getattr(client, "me", None) or getattr(client.me, "is_premium", None) is None:
-                client.me = type("Me", (), {"is_premium": False, "id": getattr(getattr(client, "me", None), "id", 0)})()
+        await _ensure_client_ready(client)
 
-        file_size = _get_media_file_size(message)
-        max_bytes = REUPLOAD_MEMORY_LIMIT_MB * 1024 * 1024
-        use_memory = file_size is not None and file_size <= max_bytes
-
-        temp_file_path: Optional[str] = None
-        media_input: Any = None
+        if downloaded is None:
+            downloaded = await self._download_single_media(
+                client=client,
+                message=message,
+                media_type=media_type,
+                task_id=task_id,
+                pause_event=pause_event,
+                cancel_event=cancel_event,
+            )
 
         try:
-            if use_memory:
-                media_input = await client.download_media(message, in_memory=True)
-                if hasattr(media_input, "name") and not media_input.name:
-                    ext = "jpg" if media_type == "photo" else ("mp4" if media_type in ("video", "animation") else "bin")
-                    media_input.name = f"media_{message.id}.{ext}"
-            else:
-                temp_file_name = str(TMP_DIR / f"tg_tmp_{task_id}_{message.id}")
-                temp_file_path = await client.download_media(message, file_name=temp_file_name)
-                media_input = temp_file_path
-
-            if not media_input:
-                raise RuntimeError(f"Falha ao baixar mídia da mensagem {message.id} para re-upload.")
-
-            if media_type == "photo":
-                return await client.send_photo(chat_id=dest_chat, photo=media_input, caption=caption)
-            elif media_type == "video":
-                duration = getattr(message.video, "duration", 0) if message.video else 0
-                width = getattr(message.video, "width", 0) if message.video else 0
-                height = getattr(message.video, "height", 0) if message.video else 0
-                return await client.send_video(
-                    chat_id=dest_chat,
-                    video=media_input,
-                    caption=caption,
-                    duration=duration,
-                    width=width,
-                    height=height
-                )
-            elif media_type == "document":
-                file_name = getattr(message.document, "file_name", None) if message.document else None
-                return await client.send_document(
-                    chat_id=dest_chat,
-                    document=media_input,
-                    caption=caption,
-                    file_name=file_name
-                )
-            elif media_type == "audio":
-                title = getattr(message.audio, "title", None) if message.audio else None
-                performer = getattr(message.audio, "performer", None) if message.audio else None
-                duration = getattr(message.audio, "duration", 0) if message.audio else 0
-                return await client.send_audio(
-                    chat_id=dest_chat,
-                    audio=media_input,
-                    caption=caption,
-                    title=title,
-                    performer=performer,
-                    duration=duration
-                )
-            elif media_type == "voice":
-                duration = getattr(message.voice, "duration", 0) if message.voice else 0
-                return await client.send_voice(
-                    chat_id=dest_chat,
-                    voice=media_input,
-                    caption=caption,
-                    duration=duration
-                )
-            elif media_type == "animation":
-                return await client.send_animation(
-                    chat_id=dest_chat,
-                    animation=media_input,
-                    caption=caption
-                )
-            elif media_type == "sticker":
-                return await client.send_sticker(
-                    chat_id=dest_chat,
-                    sticker=media_input
-                )
-            elif media_type == "video_note":
-                duration = getattr(message.video_note, "duration", 0) if message.video_note else 0
-                return await client.send_video_note(
-                    chat_id=dest_chat,
-                    video_note=media_input,
-                    duration=duration
-                )
-            else:
-                return await client.send_document(
-                    chat_id=dest_chat,
-                    document=media_input,
-                    caption=caption
-                )
+            while True:
+                media_input = downloaded.media_input
+                try:
+                    if media_type == "photo":
+                        return await client.send_photo(chat_id=dest_chat, photo=media_input, caption=caption)
+                    elif media_type == "video":
+                        duration = _int_attr(getattr(message, "video", None), "duration", 0)
+                        width = _int_attr(getattr(message, "video", None), "width", 0)
+                        height = _int_attr(getattr(message, "video", None), "height", 0)
+                        video_kwargs: Dict[str, Any] = {
+                            "chat_id": dest_chat,
+                            "video": media_input,
+                            "caption": caption,
+                            "duration": duration,
+                            "width": width,
+                            "height": height,
+                            "supports_streaming": True,
+                        }
+                        if downloaded.thumb_input is not None:
+                            video_kwargs["thumb"] = downloaded.thumb_input
+                        return await client.send_video(**video_kwargs)
+                    elif media_type == "document":
+                        file_name = _str_attr(getattr(message, "document", None), "file_name", None)
+                        return await client.send_document(
+                            chat_id=dest_chat,
+                            document=media_input,
+                            caption=caption,
+                            file_name=file_name
+                        )
+                    elif media_type == "audio":
+                        title = _str_attr(getattr(message, "audio", None), "title", None)
+                        performer = _str_attr(getattr(message, "audio", None), "performer", None)
+                        duration = _int_attr(getattr(message, "audio", None), "duration", 0)
+                        return await client.send_audio(
+                            chat_id=dest_chat,
+                            audio=media_input,
+                            caption=caption,
+                            title=title,
+                            performer=performer,
+                            duration=duration
+                        )
+                    elif media_type == "voice":
+                        duration = _int_attr(getattr(message, "voice", None), "duration", 0)
+                        return await client.send_voice(
+                            chat_id=dest_chat,
+                            voice=media_input,
+                            caption=caption,
+                            duration=duration
+                        )
+                    elif media_type == "animation":
+                        return await client.send_animation(
+                            chat_id=dest_chat,
+                            animation=media_input,
+                            caption=caption
+                        )
+                    elif media_type == "sticker":
+                        return await client.send_sticker(
+                            chat_id=dest_chat,
+                            sticker=media_input
+                        )
+                    elif media_type == "video_note":
+                        duration = _int_attr(getattr(message, "video_note", None), "duration", 0)
+                        return await client.send_video_note(
+                            chat_id=dest_chat,
+                            video_note=media_input,
+                            duration=duration
+                        )
+                    else:
+                        return await client.send_document(
+                            chat_id=dest_chat,
+                            document=media_input,
+                            caption=caption
+                        )
+                except FloodWait as e:
+                    await self.log(task_id, "warning", f"FloodWait no upload da mensagem {message.id}: Aguardando {e.value}s...")
+                    await _interruptible_sleep(e.value + 1, pause_event, cancel_event)
+                    downloaded.rewind()
         finally:
-            if temp_file_path and os.path.exists(temp_file_path):
-                try:
-                    os.remove(temp_file_path)
-                except Exception:
-                    pass
-            if use_memory and hasattr(media_input, "close"):
-                try:
-                    media_input.close()
-                except Exception:
-                    pass
+            downloaded.cleanup()
 
     async def _send_transformed_message(
         self,
@@ -576,7 +765,8 @@ class ClonerEngine:
         task: TaskResponse,
         clean_forward: bool = True,
         pause_event: Optional[asyncio.Event] = None,
-        cancel_event: Optional[asyncio.Event] = None
+        cancel_event: Optional[asyncio.Event] = None,
+        prefetched_media: Optional[_DownloadedMedia] = None,
     ) -> Optional[Message]:
         media_type = detect_media_type(message)
         original_caption = getattr(message, "caption", None) or getattr(message, "text", None)
@@ -599,8 +789,12 @@ class ClonerEngine:
         else:
             media_caption = transformed_text if transformed_text is not None else None
 
-        # Proactive check: if message has protected content, re-upload directly
-        is_protected = bool(getattr(message, "has_protected_content", False))
+        # Proactive check: if message has protected content or channel is known protected, re-upload directly
+        is_protected = (
+            _has_protected_content(message)
+            or (task.id in self._reupload_warned_tasks)
+            or (prefetched_media is not None)
+        )
         if is_protected and media_type not in ("text", "poll", "empty"):
             try:
                 return await self._send_media_via_reupload(
@@ -609,12 +803,13 @@ class ClonerEngine:
                     dest_chat=dest_chat,
                     caption=transformed_text or None,
                     media_type=media_type,
-                    task_id=task.id
+                    task_id=task.id,
+                    downloaded=prefetched_media,
+                    pause_event=pause_event,
+                    cancel_event=cancel_event,
                 )
-            except FloodWait as e:
-                await self.log(task.id, "warning", f"FloodWait: Aguardando {e.value}s exigidos pelo Telegram...")
-                await _interruptible_sleep(e.value + 1, pause_event, cancel_event)
-                return await self._send_transformed_message(client, message, dest_chat, task, clean_forward, pause_event, cancel_event)
+            except TaskPausedDuringWait:
+                raise
             except Exception as e:
                 await self.log(task.id, "error", f"Erro ao enviar mensagem {message.id}: {str(e)}")
                 raise e
@@ -651,7 +846,9 @@ class ClonerEngine:
                                 dest_chat=dest_chat,
                                 caption=transformed_text or None,
                                 media_type=media_type,
-                                task_id=task.id
+                                task_id=task.id,
+                                pause_event=pause_event,
+                                cancel_event=cancel_event,
                             )
                         raise e
             else:
@@ -666,7 +863,9 @@ class ClonerEngine:
                             dest_chat=dest_chat,
                             caption=transformed_text or None,
                             media_type=media_type,
-                            task_id=task.id
+                            task_id=task.id,
+                            pause_event=pause_event,
+                            cancel_event=cancel_event,
                         )
                     raise e
         except FloodWait as e:
@@ -674,6 +873,8 @@ class ClonerEngine:
             await _interruptible_sleep(e.value + 1, pause_event, cancel_event)
             # Retry after flood wait
             return await self._send_transformed_message(client, message, dest_chat, task, clean_forward, pause_event, cancel_event)
+        except TaskPausedDuringWait:
+            raise
         except Exception as e:
             await self.log(task.id, "error", f"Erro ao enviar mensagem {message.id}: {str(e)}")
             raise e
@@ -687,7 +888,8 @@ class ClonerEngine:
         task: TaskResponse,
         transformed_caption: Optional[str] = None,
         pause_event: Optional[asyncio.Event] = None,
-        cancel_event: Optional[asyncio.Event] = None
+        cancel_event: Optional[asyncio.Event] = None,
+        prefetched_album: Optional[List[_DownloadedMedia]] = None,
     ) -> List[Message]:
         if not media_group:
             return []
@@ -695,79 +897,168 @@ class ClonerEngine:
         first_msg = media_group[0]
         group_msg_ids = [m.id for m in media_group]
 
-        # 1. Native forward if clean_forward is False
-        if not task.clean_forward:
+        is_protected = (
+            any(_has_protected_content(m) for m in media_group)
+            or (task.id in self._reupload_warned_tasks)
+            or (prefetched_album is not None)
+        )
+
+        if not is_protected:
+            # 1. Native forward if clean_forward is False
+            if not task.clean_forward:
+                try:
+                    return await client.forward_messages(
+                        chat_id=dest_chat,
+                        from_chat_id=origin_chat,
+                        message_ids=group_msg_ids
+                    )
+                except RPCError as e:
+                    if not _is_forwards_restricted(e):
+                        raise e
+                    # Fallback to reupload if restricted
+
+            # 2. Clean copy via copy_media_group
             try:
-                return await client.forward_messages(
+                return await client.copy_media_group(
                     chat_id=dest_chat,
                     from_chat_id=origin_chat,
-                    message_ids=group_msg_ids
+                    message_id=first_msg.id,
+                    captions=transformed_caption
+                )
+            except FloodWait as e:
+                await self.log(task.id, "warning", f"FloodWait em álbum: Aguardando {e.value}s...")
+                if pause_event and cancel_event:
+                    await _interruptible_sleep(e.value + 1, pause_event, cancel_event)
+                else:
+                    await asyncio.sleep(e.value + 1)
+                return await self._send_transformed_media_group(
+                    client, origin_chat, dest_chat, media_group, task, transformed_caption, pause_event, cancel_event
                 )
             except RPCError as e:
                 if not _is_forwards_restricted(e):
                     raise e
                 # Fallback to reupload if restricted
 
-        # 2. Clean copy via copy_media_group
-        try:
-            return await client.copy_media_group(
-                chat_id=dest_chat,
-                from_chat_id=origin_chat,
-                message_id=first_msg.id,
-                captions=transformed_caption
-            )
-        except FloodWait as e:
-            await self.log(task.id, "warning", f"FloodWait em álbum: Aguardando {e.value}s...")
-            if pause_event and cancel_event:
-                await _interruptible_sleep(e.value + 1, pause_event, cancel_event)
-            else:
-                await asyncio.sleep(e.value + 1)
-            return await self._send_transformed_media_group(client, origin_chat, dest_chat, media_group, task, transformed_caption, pause_event, cancel_event)
-        except RPCError as e:
-            if not _is_forwards_restricted(e):
-                raise e
-            # Fallback to reupload if restricted
+        # 3. Protected content path: parallel download and send_media_group
+        if task.id not in self._reupload_warned_tasks:
+            self._reupload_warned_tasks.add(task.id)
+            await self.log(task.id, "info", "Canal com proteção de conteúdo detectado: utilizando re-upload paralelo.")
 
-        # 3. Protected content fallback: download and send_media_group
-        if not getattr(client, "me", None) or getattr(client.me, "is_premium", None) is None:
-            try:
-                client.me = await client.get_me()
-            except Exception:
-                pass
-            if not getattr(client, "me", None) or getattr(client.me, "is_premium", None) is None:
-                client.me = type("Me", (), {"is_premium": False, "id": getattr(getattr(client, "me", None), "id", 0)})()
+        await _ensure_client_ready(client)
 
-        temp_files: List[str] = []
-        input_media: List[Any] = []
+        downloaded_items: List[_DownloadedMedia] = (
+            prefetched_album
+            if prefetched_album is not None
+            else await self._download_album_media(client, media_group, task.id, pause_event, cancel_event)
+        )
+
         try:
-            for idx, msg in enumerate(media_group):
+            input_media: List[Any] = []
+            for idx, (msg, dl_item) in enumerate(zip(media_group, downloaded_items)):
                 cap = transformed_caption if idx == 0 else None
-                downloaded = await client.download_media(msg, in_memory=False)
-                if not downloaded:
+                media_input = dl_item.media_input
+                if not media_input:
                     continue
-                temp_files.append(downloaded)
 
                 if getattr(msg, "photo", None):
-                    input_media.append(InputMediaPhoto(downloaded, caption=cap))
+                    input_media.append(InputMediaPhoto(media_input, caption=cap))
                 elif getattr(msg, "video", None):
-                    input_media.append(InputMediaVideo(downloaded, caption=cap))
+                    vid_obj = getattr(msg, "video", None)
+                    vid_kwargs: Dict[str, Any] = {
+                        "media": media_input,
+                        "caption": cap or "",
+                        "width": _int_attr(vid_obj, "width", 0),
+                        "height": _int_attr(vid_obj, "height", 0),
+                        "duration": _int_attr(vid_obj, "duration", 0),
+                        "supports_streaming": True,
+                    }
+                    if dl_item.thumb_input is not None:
+                        vid_kwargs["thumb"] = dl_item.thumb_input
+                    input_media.append(InputMediaVideo(**vid_kwargs))
                 elif getattr(msg, "audio", None):
-                    input_media.append(InputMediaAudio(downloaded, caption=cap))
+                    aud_obj = getattr(msg, "audio", None)
+                    input_media.append(
+                        InputMediaAudio(
+                            media_input,
+                            caption=cap or "",
+                            duration=_int_attr(aud_obj, "duration", 0),
+                            performer=_str_attr(aud_obj, "performer", None),
+                            title=_str_attr(aud_obj, "title", None),
+                        )
+                    )
                 else:
-                    input_media.append(InputMediaDocument(downloaded, caption=cap))
+                    input_media.append(InputMediaDocument(media_input, caption=cap or ""))
 
-            if input_media:
-                return await client.send_media_group(chat_id=dest_chat, media=input_media)
-            return []
+            if not input_media:
+                return []
+
+            while True:
+                try:
+                    return await client.send_media_group(chat_id=dest_chat, media=input_media)
+                except FloodWait as e:
+                    await self.log(task.id, "warning", f"FloodWait no envio de álbum: Aguardando {e.value}s...")
+                    if pause_event and cancel_event:
+                        await _interruptible_sleep(e.value + 1, pause_event, cancel_event)
+                    else:
+                        await asyncio.sleep(e.value + 1)
+                    for dl_item in downloaded_items:
+                        dl_item.rewind()
         finally:
-            for f_path in temp_files:
-                if f_path and os.path.exists(f_path):
-                    try:
-                        os.remove(f_path)
-                    except Exception:
-                        pass
+            for dl_item in downloaded_items:
+                dl_item.cleanup()
+
+    async def _fetch_messages_batch(
+        self,
+        client: Client,
+        origin_chat: Any,
+        message_ids: List[int],
+        task_id: int,
+        pause_event: Optional[asyncio.Event] = None,
+        cancel_event: Optional[asyncio.Event] = None,
+    ) -> Dict[int, Message]:
+        """Fetches up to 200 messages in a single MTProto request, retrying on FloodWait."""
+        if not message_ids:
+            return {}
+        while True:
+            if cancel_event and cancel_event.is_set():
+                raise asyncio.CancelledError()
+            try:
+                raw_res = await client.get_messages(origin_chat, message_ids)
+                msgs = raw_res if isinstance(raw_res, list) else ([raw_res] if raw_res is not None else [])
+                result: Dict[int, Message] = {}
+                for m in msgs:
+                    if m is not None:
+                        m_id = getattr(m, "id", None)
+                        if isinstance(m_id, int):
+                            result[m_id] = m
+                return result
+            except FloodWait as e:
+                await self.log(task_id, "warning", f"FloodWait ao ler lote de mensagens: Aguardando {e.value}s...")
+                await _interruptible_sleep(e.value + 1, pause_event, cancel_event)
 
     async def _run_historical_cloner(self, task_id: int, cancel_event: asyncio.Event, pause_event: asyncio.Event):
+        pending_db_records: List[Dict[str, Any]] = []
+        last_db_flush = asyncio.get_event_loop().time()
+
+        async def _flush_db(cur_id: int, proc: int, cop: int, skip: int, err: int, force: bool = False) -> None:
+            nonlocal last_db_flush
+            now_t = asyncio.get_event_loop().time()
+            if not force and len(pending_db_records) < CLONER_DB_BATCH_SIZE and (now_t - last_db_flush) < 2.0:
+                return
+            if pending_db_records:
+                to_save = list(pending_db_records)
+                pending_db_records.clear()
+                await record_task_messages_batch(task_id, to_save)
+            await self._progress(
+                task_id,
+                current_message_id=cur_id,
+                processed_messages=proc,
+                copied_count=cop,
+                skipped_count=skip,
+                error_count=err,
+            )
+            last_db_flush = now_t
+
         try:
             task = await self._load_task(task_id)
             if not task:
@@ -779,13 +1070,7 @@ class ClonerEngine:
                 await self._set_status(task_id, TaskStatus.FAILED)
                 return
 
-            if not getattr(client, "me", None) or getattr(client.me, "is_premium", None) is None:
-                try:
-                    client.me = await client.get_me()
-                except Exception:
-                    pass
-                if not getattr(client, "me", None) or getattr(client.me, "is_premium", None) is None:
-                    client.me = type("Me", (), {"is_premium": False, "id": 0})()
+            await _ensure_client_ready(client)
 
             origin_chat = parse_chat_id(task.origin_chat)
             dest_chat = parse_chat_id(task.dest_chat)
@@ -798,6 +1083,14 @@ class ClonerEngine:
                     async for _ in client.get_dialogs(limit=100):
                         pass
                     origin_info = await client.get_chat(origin_chat)
+
+                if _has_protected_content(origin_info) and task_id not in self._reupload_warned_tasks:
+                    self._reupload_warned_tasks.add(task_id)
+                    await self.log(
+                        task_id,
+                        "info",
+                        "Canal com proteção de conteúdo detectado: modo turbo (leitura em lote + prefetch paralelo) ativado."
+                    )
 
                 try:
                     dest_info = await client.get_chat(dest_chat)
@@ -854,262 +1147,461 @@ class ClonerEngine:
             await self.log(task_id, "info", f"Clonando do ID {start_id} até {last_message_id} ({total_msgs} mensagens)...")
 
             current_id = max(start_id, task.current_message_id) if task.current_message_id > 0 else start_id
+            prefetch_sem = asyncio.Semaphore(max(1, CLONER_PREFETCH_CONCURRENCY))
 
             while current_id <= last_message_id:
                 if cancel_event.is_set():
+                    await _flush_db(current_id, processed_count, copied_count, skipped_count, error_count, force=True)
                     await self.log(task_id, "warning", "Processo cancelado.")
                     await self._set_status(task_id, TaskStatus.CANCELLED)
                     return
 
-                # Wait if paused
                 if not pause_event.is_set():
+                    await _flush_db(current_id, processed_count, copied_count, skipped_count, error_count, force=True)
                     await pause_event.wait()
-                    # Reload task from database upon resumption to apply any edits made while paused
                     fresh_task = await self._load_task(task_id)
                     if fresh_task:
                         task = fresh_task
                         origin_chat = parse_chat_id(task.origin_chat)
                         dest_chat = parse_chat_id(task.dest_chat)
 
-                if current_id in already_copied_ids:
+                # Advance past already copied IDs quickly
+                while current_id <= last_message_id and current_id in already_copied_ids:
                     current_id += 1
-                    continue
+                if current_id > last_message_id:
+                    break
 
-                # Fetch message
+                batch_end = min(current_id + CLONER_FETCH_BATCH_SIZE - 1, last_message_id)
+                ids_to_fetch = [
+                    mid for mid in range(current_id, batch_end + 1)
+                    if mid not in already_copied_ids
+                ]
+
                 try:
-                    message = await client.get_messages(origin_chat, current_id)
-                except FloodWait as e:
-                    await self.log(task_id, "warning", f"FloodWait: Aguardando {e.value}s...")
-                    try:
-                        await _interruptible_sleep(e.value + 1, pause_event, cancel_event)
-                    except TaskPausedDuringWait:
-                        await pause_event.wait()
+                    msg_map = await self._fetch_messages_batch(
+                        client, origin_chat, ids_to_fetch, task_id, pause_event, cancel_event
+                    )
+                except TaskPausedDuringWait:
+                    await _flush_db(current_id, processed_count, copied_count, skipped_count, error_count, force=True)
+                    await pause_event.wait()
                     continue
                 except Exception as e:
-                    await self.log(task_id, "warning", f"Msg {current_id}: Erro ao ler ({str(e)}). Pulando.")
-                    skipped_count += 1
-                    processed_count += 1
-                    await record_task_message(task_id, current_id, "failed")
-                    current_id += 1
+                    await self.log(task_id, "warning", f"Erro ao ler lote {current_id}..{batch_end} ({str(e)}). Pulando lote.")
+                    for mid in ids_to_fetch:
+                        skipped_count += 1
+                        processed_count += 1
+                        pending_db_records.append({
+                            "origin_message_id": mid,
+                            "status": "failed",
+                            "dest_message_id": None,
+                            "media_type": None,
+                        })
+                    current_id = batch_end + 1
+                    await _flush_db(batch_end, processed_count, copied_count, skipped_count, error_count, force=True)
                     continue
 
-                # Check if message is part of an album (media group)
-                if message and getattr(message, "media_group_id", None):
-                    try:
-                        media_group = await client.get_media_group(origin_chat, current_id)
-                    except Exception:
-                        media_group = None
+                # If the last message of the batch belongs to an album, fetch up to 10 lookahead messages so the album isn't split
+                edge_msg = msg_map.get(batch_end)
+                if edge_msg and getattr(edge_msg, "media_group_id", None) and batch_end < last_message_id:
+                    lookahead_ids = [
+                        mid for mid in range(batch_end + 1, min(batch_end + 11, last_message_id + 1))
+                        if mid not in already_copied_ids
+                    ]
+                    if lookahead_ids:
+                        try:
+                            extra_map = await self._fetch_messages_batch(
+                                client, origin_chat, lookahead_ids, task_id, pause_event, cancel_event
+                            )
+                            msg_map.update(extra_map)
+                        except Exception:
+                            pass
 
-                    if media_group and len(media_group) > 1:
-                        group_msg_ids = sorted([m.id for m in media_group])
-                        album_caption = next((m.caption for m in media_group if getattr(m, "caption", None)), None)
-                        transformed_caption = apply_text_transformations(
-                            text=album_caption,
+                # Group messages by media_group_id within the fetched map
+                albums_by_gid: Dict[Any, List[Message]] = {}
+                for m in msg_map.values():
+                    gid = getattr(m, "media_group_id", None)
+                    if gid is not None:
+                        albums_by_gid.setdefault(gid, []).append(m)
+                for gid in albums_by_gid:
+                    albums_by_gid[gid].sort(key=lambda x: x.id)
+
+                # Build ordered operations for this batch
+                ops: List[Dict[str, Any]] = []
+                grouped_seen: set[int] = set()
+                cursor = current_id
+
+                while cursor <= batch_end:
+                    if cursor in already_copied_ids or cursor in grouped_seen:
+                        cursor += 1
+                        continue
+
+                    message = msg_map.get(cursor)
+                    gid = getattr(message, "media_group_id", None) if message else None
+
+                    if message and gid is not None:
+                        media_group = albums_by_gid.get(gid, [])
+                        if len(media_group) <= 1:
+                            try:
+                                fetched_group = await client.get_media_group(origin_chat, cursor)
+                                if fetched_group and len(fetched_group) > 1:
+                                    media_group = sorted(fetched_group, key=lambda x: x.id)
+                            except Exception:
+                                pass
+
+                        if media_group and len(media_group) > 1:
+                            for gm in media_group:
+                                grouped_seen.add(gm.id)
+                            ops.append({
+                                "kind": "album",
+                                "id": cursor,
+                                "max_id": max(gm.id for gm in media_group),
+                                "media_group": media_group,
+                            })
+                            cursor = max(cursor + 1, max(gm.id for gm in media_group) + 1)
+                            continue
+
+                    media_type = detect_media_type(message) if message else "empty"
+                    if not message or media_type == "empty":
+                        ops.append({"kind": "skip", "id": cursor, "media_type": "empty"})
+                        cursor += 1
+                        continue
+
+                    if not is_media_allowed(media_type, task.media_types):
+                        ops.append({"kind": "skip", "id": cursor, "media_type": media_type})
+                        cursor += 1
+                        continue
+
+                    if media_type == "text":
+                        orig_text = getattr(message, "text", None) or getattr(message, "caption", None)
+                        clean_text = apply_text_transformations(
+                            text=orig_text,
                             remove_captions=bool(getattr(task, "remove_captions", False)),
                             remove_links=task.remove_links,
                             remove_mentions=task.remove_mentions,
                             custom_replacements=task.custom_replacements,
                             header_text=task.header_text,
-                            footer_text=task.footer_text
+                            footer_text=task.footer_text,
                         )
+                        if not clean_text:
+                            ops.append({"kind": "skip", "id": cursor, "media_type": "text"})
+                            cursor += 1
+                            continue
 
+                    ops.append({
+                        "kind": "single",
+                        "id": cursor,
+                        "message": message,
+                        "media_type": media_type,
+                    })
+                    cursor += 1
+
+                # Sliding-window prefetch manager for protected media/albums in this batch
+                send_op_indices = [
+                    idx for idx, op in enumerate(ops)
+                    if op["kind"] in ("single", "album")
+                ]
+                prefetch_tasks: Dict[int, asyncio.Task] = {}
+
+                async def _prefetch_op(op_dict: Dict[str, Any]) -> Any:
+                    async with prefetch_sem:
+                        if op_dict["kind"] == "album":
+                            return await self._download_album_media(
+                                client, op_dict["media_group"], task_id, pause_event, cancel_event
+                            )
+                        else:
+                            return await self._download_single_media(
+                                client, op_dict["message"], op_dict["media_type"], task_id, pause_event, cancel_event
+                            )
+
+                def _schedule_prefetch_window(current_send_pos: int) -> None:
+                    window_end = min(len(send_op_indices), current_send_pos + CLONER_PREFETCH_QUEUE_SIZE)
+                    for pos in range(current_send_pos, window_end):
+                        op_idx = send_op_indices[pos]
+                        if op_idx in prefetch_tasks:
+                            continue
+                        op_candidate = ops[op_idx]
+                        if op_candidate["kind"] == "album":
+                            needs_dl = (
+                                (task_id in self._reupload_warned_tasks)
+                                or any(_has_protected_content(m) for m in op_candidate["media_group"])
+                            )
+                        else:
+                            m_type = op_candidate["media_type"]
+                            needs_dl = m_type not in ("text", "poll", "empty") and (
+                                (task_id in self._reupload_warned_tasks)
+                                or _has_protected_content(op_candidate["message"])
+                            )
+                        if needs_dl:
+                            prefetch_tasks[op_idx] = asyncio.create_task(_prefetch_op(op_candidate))
+
+                async def _cleanup_prefetch_tasks() -> None:
+                    for p_task in list(prefetch_tasks.values()):
+                        if not p_task.done():
+                            p_task.cancel()
+                    for p_task in list(prefetch_tasks.values()):
                         try:
+                            res = await p_task
+                            if isinstance(res, _DownloadedMedia):
+                                res.cleanup()
+                            elif isinstance(res, list):
+                                for item in res:
+                                    if isinstance(item, _DownloadedMedia):
+                                        item.cleanup()
+                        except BaseException:
+                            pass
+                    prefetch_tasks.clear()
+
+                send_pos_map = {op_idx: pos for pos, op_idx in enumerate(send_op_indices)}
+
+                try:
+                    op_i = 0
+                    while op_i < len(ops):
+                        op = ops[op_i]
+                        op_id = op["id"]
+
+                        if cancel_event.is_set():
+                            await _cleanup_prefetch_tasks()
+                            await _flush_db(op_id, processed_count, copied_count, skipped_count, error_count, force=True)
+                            await self.log(task_id, "warning", "Processo cancelado.")
+                            await self._set_status(task_id, TaskStatus.CANCELLED)
+                            return
+
+                        if not pause_event.is_set():
+                            await _cleanup_prefetch_tasks()
+                            await _flush_db(op_id, processed_count, copied_count, skipped_count, error_count, force=True)
                             await pause_event.wait()
-                            sent_group = await self._send_transformed_media_group(
-                                client=client,
-                                origin_chat=origin_chat,
-                                dest_chat=dest_chat,
-                                media_group=media_group,
-                                task=task,
-                                transformed_caption=transformed_caption,
-                                pause_event=pause_event,
-                                cancel_event=cancel_event
-                            )
+                            fresh_task = await self._load_task(task_id)
+                            if fresh_task:
+                                task = fresh_task
+                                origin_chat = parse_chat_id(task.origin_chat)
+                                dest_chat = parse_chat_id(task.dest_chat)
 
-                            for m_idx, m_item in enumerate(media_group):
-                                dest_id = sent_group[m_idx].id if (sent_group and m_idx < len(sent_group)) else None
-                                await record_task_message(task_id, m_item.id, "copied", dest_message_id=dest_id, media_type="album")
-                                already_copied_ids.add(m_item.id)
-
-                            copied_count += len(media_group)
-                            processed_count += len(media_group)
-                            current_id = max(group_msg_ids)
-
-                            await self.log(task_id, "success", f"Álbum com {len(media_group)} mídias (IDs: {min(group_msg_ids)} a {max(group_msg_ids)}) clonado com sucesso!")
-                            await self._progress(
-                                task_id,
-                                current_message_id=current_id,
-                                processed_messages=processed_count,
-                                copied_count=copied_count,
-                                skipped_count=skipped_count,
-                                error_count=error_count
-                            )
+                        if op["kind"] == "skip":
+                            skipped_count += 1
+                            processed_count += 1
+                            already_copied_ids.add(op_id)
+                            pending_db_records.append({
+                                "origin_message_id": op_id,
+                                "status": "skipped",
+                                "dest_message_id": None,
+                                "media_type": op["media_type"],
+                            })
+                            await _flush_db(op_id, processed_count, copied_count, skipped_count, error_count)
                             await self.broadcast_event("task_progress", {
                                 "task_id": task_id,
-                                "current": current_id,
+                                "current": op_id,
                                 "total": total_msgs,
                                 "copied": copied_count,
                                 "skipped": skipped_count,
                                 "errors": error_count,
-                                "percent": round(min(100.0, (processed_count / total_msgs) * 100), 1)
+                                "percent": round(min(100.0, (processed_count / total_msgs) * 100), 1),
                             })
+                            op_i += 1
+                            continue
+
+                        # Schedule prefetch window for current & upcoming media items
+                        if op_i in send_pos_map:
+                            _schedule_prefetch_window(send_pos_map[op_i])
+
+                        prefetched_data = None
+                        if op_i in prefetch_tasks:
+                            p_task = prefetch_tasks.pop(op_i)
                             try:
-                                await _interruptible_sleep(task.delay_seconds, pause_event, cancel_event)
+                                prefetched_data = await p_task
                             except TaskPausedDuringWait:
+                                await _cleanup_prefetch_tasks()
+                                await _flush_db(op_id, processed_count, copied_count, skipped_count, error_count, force=True)
                                 await pause_event.wait()
-                            current_id += 1
+                                continue
+                            except asyncio.CancelledError:
+                                raise
+                            except Exception:
+                                prefetched_data = None
+
+                        if op["kind"] == "album":
+                            media_group = op["media_group"]
+                            group_msg_ids = [m.id for m in media_group]
+                            album_caption = next((m.caption for m in media_group if getattr(m, "caption", None)), None)
+                            transformed_caption = apply_text_transformations(
+                                text=album_caption,
+                                remove_captions=bool(getattr(task, "remove_captions", False)),
+                                remove_links=task.remove_links,
+                                remove_mentions=task.remove_mentions,
+                                custom_replacements=task.custom_replacements,
+                                header_text=task.header_text,
+                                footer_text=task.footer_text,
+                            )
+                            try:
+                                await pause_event.wait()
+                                sent_group = await self._send_transformed_media_group(
+                                    client=client,
+                                    origin_chat=origin_chat,
+                                    dest_chat=dest_chat,
+                                    media_group=media_group,
+                                    task=task,
+                                    transformed_caption=transformed_caption,
+                                    pause_event=pause_event,
+                                    cancel_event=cancel_event,
+                                    prefetched_album=prefetched_data,
+                                )
+                               # Ensure next items start prefetching if protected mode was just discovered
+                                if op_i in send_pos_map:
+                                    _schedule_prefetch_window(send_pos_map[op_i] + 1)
+
+                                for m_idx, m_item in enumerate(media_group):
+                                    dest_id = sent_group[m_idx].id if (sent_group and m_idx < len(sent_group)) else None
+                                    pending_db_records.append({
+                                        "origin_message_id": m_item.id,
+                                        "status": "copied",
+                                        "dest_message_id": dest_id,
+                                        "media_type": "album",
+                                    })
+                                    already_copied_ids.add(m_item.id)
+
+                                copied_count += len(media_group)
+                                processed_count += len(media_group)
+                                max_gid = max(group_msg_ids)
+
+                                await self.log(
+                                    task_id,
+                                    "success",
+                                    f"Álbum com {len(media_group)} mídias (IDs: {min(group_msg_ids)} a {max_gid}) clonado com sucesso!"
+                                )
+                                await _flush_db(max_gid, processed_count, copied_count, skipped_count, error_count)
+                                await self.broadcast_event("task_progress", {
+                                    "task_id": task_id,
+                                    "current": max_gid,
+                                    "total": total_msgs,
+                                    "copied": copied_count,
+                                    "skipped": skipped_count,
+                                    "errors": error_count,
+                                    "percent": round(min(100.0, (processed_count / total_msgs) * 100), 1),
+                                })
+                                try:
+                                    await _interruptible_sleep(task.delay_seconds, pause_event, cancel_event)
+                                except TaskPausedDuringWait:
+                                    await _cleanup_prefetch_tasks()
+                                    await _flush_db(max_gid, processed_count, copied_count, skipped_count, error_count, force=True)
+                                    await pause_event.wait()
+                                op_i += 1
+                                continue
+                            except TaskPausedDuringWait:
+                                await _cleanup_prefetch_tasks()
+                                await _flush_db(op_id, processed_count, copied_count, skipped_count, error_count, force=True)
+                                await pause_event.wait()
+                                continue
+                            except Exception as e:
+                                error_count += len(media_group)
+                                processed_count += len(media_group)
+                                for m_item in media_group:
+                                    pending_db_records.append({
+                                        "origin_message_id": m_item.id,
+                                        "status": "error",
+                                        "dest_message_id": None,
+                                        "media_type": "album",
+                                    })
+                                    already_copied_ids.add(m_item.id)
+                                await self.log(task_id, "error", f"Erro ao clonar álbum {group_msg_ids}: {str(e)}")
+                                await _flush_db(max(group_msg_ids), processed_count, copied_count, skipped_count, error_count)
+                                op_i += 1
+                                continue
+
+                        # Single message
+                        message = op["message"]
+                        media_type = op["media_type"]
+                        try:
+                            await pause_event.wait()
+                            sent = await self._send_transformed_message(
+                                client,
+                                message,
+                                dest_chat,
+                                task,
+                                task.clean_forward,
+                                pause_event=pause_event,
+                                cancel_event=cancel_event,
+                                prefetched_media=prefetched_data,
+                            )
+                            # Ensure next items start prefetching if protected mode was just discovered
+                            if op_i in send_pos_map:
+                                _schedule_prefetch_window(send_pos_map[op_i] + 1)
+
+                            copied_count += 1
+                            processed_count += 1
+                            dest_msg_id = sent.id if sent else None
+                            already_copied_ids.add(op_id)
+                            pending_db_records.append({
+                                "origin_message_id": op_id,
+                                "status": "copied",
+                                "dest_message_id": dest_msg_id,
+                                "media_type": media_type,
+                            })
+                            # Persist log to SQL for small tasks or periodic milestones; always broadcast to live UI
+                            if total_msgs <= 500 or copied_count <= 5 or copied_count % 25 == 0:
+                                await self.log(task_id, "success", f"Mensagem {op_id}/{last_message_id} ({media_type}) clonada com sucesso!")
+                            else:
+                                await self.broadcast_event("log", {
+                                    "task_id": task_id,
+                                    "level": "success",
+                                    "message": f"Mensagem {op_id}/{last_message_id} ({media_type}) clonada com sucesso!",
+                                })
+                        except TaskPausedDuringWait:
+                            await _cleanup_prefetch_tasks()
+                            await _flush_db(op_id, processed_count, copied_count, skipped_count, error_count, force=True)
+                            await self.log(task_id, "warning", f"Pausa durante a mensagem {op_id}. Aguardando retomada...")
+                            await pause_event.wait()
                             continue
                         except Exception as e:
-                            await self.log(task_id, "error", f"Erro ao clonar álbum {group_msg_ids}: {str(e)}")
+                            error_count += 1
+                            processed_count += 1
+                            already_copied_ids.add(op_id)
+                            pending_db_records.append({
+                                "origin_message_id": op_id,
+                                "status": "error",
+                                "dest_message_id": None,
+                                "media_type": media_type,
+                            })
+                            await self.log(task_id, "error", f"Msg {op_id}: Erro ao clonar: {str(e)}")
 
-                media_type = detect_media_type(message) if message else "empty"
-
-                if not message or media_type == "empty":
-                    skipped_count += 1
-                    processed_count += 1
-                    await record_task_message(task_id, current_id, "skipped", media_type="empty")
-                    await self._progress(
-                        task_id,
-                        current_message_id=current_id,
-                        processed_messages=processed_count,
-                        skipped_count=skipped_count
-                    )
-                    await self.broadcast_event("task_progress", {
-                        "task_id": task_id,
-                        "current": current_id,
-                        "total": total_msgs,
-                        "copied": copied_count,
-                        "skipped": skipped_count,
-                        "errors": error_count,
-                        "percent": round((processed_count / total_msgs) * 100, 1)
-                    })
-                    try:
-                        await _interruptible_sleep(task.skip_delay_seconds, pause_event, cancel_event)
-                    except TaskPausedDuringWait:
-                        await pause_event.wait()
-                    current_id += 1
-                    continue
-
-                # Check if media type is allowed
-                if not is_media_allowed(media_type, task.media_types):
-                    skipped_count += 1
-                    processed_count += 1
-                    await record_task_message(task_id, current_id, "skipped", media_type=media_type)
-                    await self._progress(
-                        task_id,
-                        current_message_id=current_id,
-                        processed_messages=processed_count,
-                        skipped_count=skipped_count
-                    )
-                    await self.broadcast_event("task_progress", {
-                        "task_id": task_id,
-                        "current": current_id,
-                        "total": total_msgs,
-                        "copied": copied_count,
-                        "skipped": skipped_count,
-                        "errors": error_count,
-                        "percent": round((processed_count / total_msgs) * 100, 1)
-                    })
-                    try:
-                        await _interruptible_sleep(task.skip_delay_seconds, pause_event, cancel_event)
-                    except TaskPausedDuringWait:
-                        await pause_event.wait()
-                    current_id += 1
-                    continue
-
-                # If text message transforms into empty text (e.g. pure spam links stripped away), skip it.
-                # If it has model name or catalog text, it passes through!
-                if media_type == "text":
-                    orig_text = getattr(message, "text", None) or getattr(message, "caption", None)
-                    clean_text = apply_text_transformations(
-                        text=orig_text,
-                        remove_captions=bool(getattr(task, "remove_captions", False)),
-                        remove_links=task.remove_links,
-                        remove_mentions=task.remove_mentions,
-                        custom_replacements=task.custom_replacements,
-                        header_text=task.header_text,
-                        footer_text=task.footer_text
-                    )
-                    if not clean_text:
-                        skipped_count += 1
-                        processed_count += 1
-                        await record_task_message(task_id, current_id, "skipped", media_type="text")
-                        await self._progress(
-                            task_id,
-                            current_message_id=current_id,
-                            processed_messages=processed_count,
-                            skipped_count=skipped_count
-                        )
+                        await _flush_db(op_id, processed_count, copied_count, skipped_count, error_count)
                         await self.broadcast_event("task_progress", {
                             "task_id": task_id,
-                            "current": current_id,
+                            "current": op_id,
                             "total": total_msgs,
                             "copied": copied_count,
                             "skipped": skipped_count,
                             "errors": error_count,
-                            "percent": round((processed_count / total_msgs) * 100, 1)
+                            "percent": round(min(100.0, (processed_count / total_msgs) * 100), 1),
                         })
+
                         try:
-                            await _interruptible_sleep(task.skip_delay_seconds, pause_event, cancel_event)
+                            await _interruptible_sleep(task.delay_seconds, pause_event, cancel_event)
                         except TaskPausedDuringWait:
+                            await _cleanup_prefetch_tasks()
+                            await _flush_db(op_id, processed_count, copied_count, skipped_count, error_count, force=True)
                             await pause_event.wait()
-                        current_id += 1
-                        continue
+                        op_i += 1
+                finally:
+                    await _cleanup_prefetch_tasks()
 
-                # Process and send message
-                try:
-                    await pause_event.wait()
-                    sent = await self._send_transformed_message(
-                        client, message, dest_chat, task, task.clean_forward,
-                        pause_event=pause_event, cancel_event=cancel_event
-                    )
-                    copied_count += 1
-                    processed_count += 1
-                    dest_msg_id = sent.id if sent else None
-                    await record_task_message(task_id, current_id, "copied", dest_message_id=dest_msg_id, media_type=media_type)
-                    await self.log(task_id, "success", f"Mensagem {current_id}/{last_message_id} ({media_type}) clonada com sucesso!")
-                except TaskPausedDuringWait:
-                    await self.log(task_id, "warning", f"Pausa durante a mensagem {current_id}. Aguardando retomada...")
-                    await pause_event.wait()
-                    continue
-                except Exception as e:
-                    error_count += 1
-                    processed_count += 1
-                    await record_task_message(task_id, current_id, "error", media_type=media_type)
-                    await self.log(task_id, "error", f"Msg {current_id}: Erro ao clonar: {str(e)}")
+                current_id = max(cursor, batch_end + 1)
 
-                await self._progress(
-                    task_id,
-                    current_message_id=current_id,
-                    processed_messages=processed_count,
-                    copied_count=copied_count,
-                    skipped_count=skipped_count,
-                    error_count=error_count
-                )
-
-                await self.broadcast_event("task_progress", {
-                    "task_id": task_id,
-                    "current": current_id,
-                    "total": total_msgs,
-                    "copied": copied_count,
-                    "skipped": skipped_count,
-                    "errors": error_count,
-                    "percent": round((processed_count / total_msgs) * 100, 1)
-                })
-
-                try:
-                    await _interruptible_sleep(task.delay_seconds, pause_event, cancel_event)
-                except TaskPausedDuringWait:
-                    await pause_event.wait()
-                current_id += 1
-
-            # Finished
+            # Flush any remaining buffered records before marking completed
+            await _flush_db(last_message_id, processed_count, copied_count, skipped_count, error_count, force=True)
             await self._set_status(task_id, TaskStatus.COMPLETED)
             await self.log(task_id, "success", f"Clonagem da tarefa '{task.name}' finalizada com sucesso! Total copiadas: {copied_count}.")
             await self.broadcast_event("task_status", {"task_id": task_id, "status": TaskStatus.COMPLETED.value})
         except asyncio.CancelledError:
-            pass
+            try:
+                await record_task_messages_batch(task_id, list(pending_db_records))
+                pending_db_records.clear()
+            except Exception:
+                pass
         except Exception as e:
+            try:
+                await record_task_messages_batch(task_id, list(pending_db_records))
+                pending_db_records.clear()
+            except Exception:
+                pass
             await self.log(task_id, "error", f"Erro fatal no motor de clonagem: {str(e)}")
             await self._set_status(task_id, TaskStatus.FAILED)
         finally:
@@ -1127,24 +1619,21 @@ class ClonerEngine:
                 await self._set_status(task_id, TaskStatus.FAILED)
                 return
 
-            if not getattr(client, "me", None) or getattr(client.me, "is_premium", None) is None:
-                try:
-                    client.me = await client.get_me()
-                except Exception:
-                    pass
-                if not getattr(client, "me", None) or getattr(client.me, "is_premium", None) is None:
-                    client.me = type("Me", (), {"is_premium": False, "id": 0})()
+            await _ensure_client_ready(client)
 
             origin_chat = parse_chat_id(task.origin_chat)
             dest_chat = parse_chat_id(task.dest_chat)
 
             try:
                 try:
-                    await client.get_chat(origin_chat)
+                    origin_info = await client.get_chat(origin_chat)
                 except Exception:
                     async for _ in client.get_dialogs(limit=100):
                         pass
-                    await client.get_chat(origin_chat)
+                    origin_info = await client.get_chat(origin_chat)
+
+                if _has_protected_content(origin_info) and task_id not in self._reupload_warned_tasks:
+                    self._reupload_warned_tasks.add(task_id)
 
                 try:
                     dest_info = await client.get_chat(dest_chat)
@@ -1238,9 +1727,16 @@ class ClonerEngine:
                                     pause_event=pause_event,
                                     cancel_event=cancel_event
                                 )
+                                batch_recs = []
                                 for m_idx, m_item in enumerate(media_group):
                                     dest_id = sent_group[m_idx].id if (sent_group and m_idx < len(sent_group)) else None
-                                    await record_task_message(task_id, m_item.id, "copied", dest_message_id=dest_id, media_type="album")
+                                    batch_recs.append({
+                                        "origin_message_id": m_item.id,
+                                        "status": "copied",
+                                        "dest_message_id": dest_id,
+                                        "media_type": "album",
+                                    })
+                                await record_task_messages_batch(task_id, batch_recs)
                                 await self.log(task_id, "success", f"[Live] Álbum com {len(media_group)} mídias sincronizado para o destino!")
                                 t = await self._load_task(task_id)
                                 if t:

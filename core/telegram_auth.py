@@ -15,7 +15,10 @@ from pyrogram.errors import (
     FloodWait, ChannelInvalid, PeerIdInvalid, UserDeactivated, UserDeactivatedBan
 )
 
-from core.config import SESSIONS_DIR, TG_API_ID, TG_API_HASH
+from core.config import (
+    SESSIONS_DIR, TG_API_ID, TG_API_HASH,
+    TG_WORKERS, TG_MAX_CONCURRENT_TRANSMISSIONS
+)
 from core.database import (
     save_account, get_active_account, clear_active_account, add_log
 )
@@ -85,7 +88,9 @@ class TelegramAuthManager:
                         session_string=decrypt_session(account["session_string"]),
                         api_id=api_id,
                         api_hash=api_hash,
-                        in_memory=True
+                        in_memory=True,
+                        workers=TG_WORKERS,
+                        max_concurrent_transmissions=TG_MAX_CONCURRENT_TRANSMISSIONS
                     )
                 elif account.get("type") == AccountType.BOT.value and account.get("bot_token"):
                     client = Client(
@@ -93,7 +98,9 @@ class TelegramAuthManager:
                         api_id=api_id,
                         api_hash=api_hash,
                         bot_token=account["bot_token"],
-                        in_memory=True
+                        in_memory=True,
+                        workers=TG_WORKERS,
+                        max_concurrent_transmissions=TG_MAX_CONCURRENT_TRANSMISSIONS
                     )
                 else:
                     return None
@@ -159,7 +166,9 @@ class TelegramAuthManager:
             name=f"pending_{clean_phone}",
             api_id=TG_API_ID,
             api_hash=TG_API_HASH,
-            in_memory=True
+            in_memory=True,
+            workers=TG_WORKERS,
+            max_concurrent_transmissions=TG_MAX_CONCURRENT_TRANSMISSIONS
         )
 
         try:
@@ -328,7 +337,9 @@ class TelegramAuthManager:
             api_id=TG_API_ID,
             api_hash=TG_API_HASH,
             bot_token=bot_token.strip(),
-            in_memory=True
+            in_memory=True,
+            workers=TG_WORKERS,
+            max_concurrent_transmissions=TG_MAX_CONCURRENT_TRANSMISSIONS
         )
 
         try:

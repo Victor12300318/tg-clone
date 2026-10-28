@@ -1285,7 +1285,10 @@ document.addEventListener('alpine:init', () => {
                 this.taskForm.skip_delay_seconds = 0.5;
             } else if (preset === 'fast') {
                 this.taskForm.delay_seconds = 3.0;
-                this.taskForm.skip_delay_seconds = 0.3;
+                this.taskForm.skip_delay_seconds = 0.2;
+            } else if (preset === 'turbo') {
+                this.taskForm.delay_seconds = 1.5;
+                this.taskForm.skip_delay_seconds = 0.0;
             }
             this.refreshIcons();
         },
@@ -1352,8 +1355,8 @@ document.addEventListener('alpine:init', () => {
                     end_message_id: this.taskForm.end_message_id ? parseInt(this.taskForm.end_message_id) : null,
                     media_types: this.taskForm.media_types,
                     clean_forward: this.taskForm.clean_forward,
-                    delay_seconds: parseFloat(this.taskForm.delay_seconds) || 10.0,
-                    skip_delay_seconds: parseFloat(this.taskForm.skip_delay_seconds) || 0.5,
+                    delay_seconds: !isNaN(parseFloat(this.taskForm.delay_seconds)) ? parseFloat(this.taskForm.delay_seconds) : 10.0,
+                    skip_delay_seconds: !isNaN(parseFloat(this.taskForm.skip_delay_seconds)) ? parseFloat(this.taskForm.skip_delay_seconds) : 0.0,
                     remove_captions: Boolean(this.taskForm.remove_captions),
                     remove_links: this.taskForm.remove_links,
                     remove_mentions: this.taskForm.remove_mentions,
@@ -1430,6 +1433,7 @@ document.addEventListener('alpine:init', () => {
             if (this.taskForm.delay_seconds === 20.0) this.delayPreset = 'slow';
             else if (this.taskForm.delay_seconds === 10.0) this.delayPreset = 'normal';
             else if (this.taskForm.delay_seconds === 3.0) this.delayPreset = 'fast';
+            else if (this.taskForm.delay_seconds === 1.5) this.delayPreset = 'turbo';
             else this.delayPreset = 'custom';
 
             if (this.taskForm.media_types.includes('all')) this.mediaPreset = 'all';

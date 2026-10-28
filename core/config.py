@@ -36,8 +36,16 @@ STATIC_DIR.mkdir(parents=True, exist_ok=True)
 # Default operational settings
 DEFAULT_USER_DELAY = 10.0
 DEFAULT_BOT_DELAY = 1.5
-DEFAULT_SKIP_DELAY = 0.5
-REUPLOAD_MEMORY_LIMIT_MB = 256  # In-memory RAM limit for protected media re-upload (in MB)
+DEFAULT_SKIP_DELAY = 0.0
+REUPLOAD_MEMORY_LIMIT_MB = int(os.getenv("REUPLOAD_MEMORY_LIMIT_MB", "256"))  # In-memory RAM limit for protected media re-upload (in MB)
+
+# High-volume cloning & MTProto concurrency settings
+TG_WORKERS = int(os.getenv("TG_WORKERS", "16"))
+TG_MAX_CONCURRENT_TRANSMISSIONS = int(os.getenv("TG_MAX_CONCURRENT_TRANSMISSIONS", "8"))
+CLONER_FETCH_BATCH_SIZE = int(os.getenv("CLONER_FETCH_BATCH_SIZE", "200"))
+CLONER_PREFETCH_CONCURRENCY = int(os.getenv("CLONER_PREFETCH_CONCURRENCY", "3"))
+CLONER_PREFETCH_QUEUE_SIZE = int(os.getenv("CLONER_PREFETCH_QUEUE_SIZE", "4"))
+CLONER_DB_BATCH_SIZE = int(os.getenv("CLONER_DB_BATCH_SIZE", "25"))
 
 # Server config
 HOST = os.getenv("HOST", "0.0.0.0")
