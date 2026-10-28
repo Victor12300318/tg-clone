@@ -1021,6 +1021,7 @@ class ClonerEngine:
             if not input_media:
                 return []
 
+            upload_attempts = 0
             while True:
                 try:
                     return await client.send_media_group(chat_id=dest_chat, media=input_media)
@@ -1032,6 +1033,22 @@ class ClonerEngine:
                         await asyncio.sleep(e.value + 1)
                     for dl_item in downloaded_items:
                         dl_item.rewind()
+                except (RPCError, OSError) as e:
+                    if "FILE_PART" in str(e).upper() and upload_attempts < 2:
+                        upload_attempts += 1
+                        await self.log(
+                            task.id,
+                            "warning",
+                            f"Parte de mídia ausente no upload do álbum (tentativa {upload_attempts}/2), reenviando..."
+                        )
+                        if pause_event and cancel_event:
+                            await _interruptible_sleep(1.5 * upload_attempts, pause_event, cancel_event)
+                        else:
+                            await asyncio.sleep(1.5 * upload_attempts)
+                        for dl_item in downloaded_items:
+                            dl_item.rewind()
+                        continue
+                    raise
         finally:
             for dl_item in downloaded_items:
                 dl_item.cleanup()

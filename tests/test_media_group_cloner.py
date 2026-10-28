@@ -345,3 +345,75 @@ async def test_download_single_media_retries_on_closed_tcp_transport():
             assert dl.media_input.getvalue() == b"valid_video_payload"
         finally:
             dl.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_send_media_group_retries_on_file_part_missing():
+    import io
+    from types import SimpleNamespace
+    from pyrogram.errors import FilePartMissing
+
+    mock_client = AsyncMock()
+    mock_client.me = SimpleNamespace(is_premium=True, id=1)
+    mock_client.max_concurrent_transmissions = 1
+
+    async def fake_download(target, *args, **kwargs):
+        buf = io.BytesIO(b"video_bytes_content")
+        buf.name = "album_video.mp4"
+        return buf
+
+    send_calls = 0
+
+    async def flaky_send_media_group(*args, **kwargs):
+        nonlocal send_calls
+        send_calls += 1
+        if send_calls == 1:
+            raise FilePartMissing(value=185)
+        return [SimpleNamespace(id=701), SimpleNamespace(id=702)]
+
+    mock_client.download_media = AsyncMock(side_effect=fake_download)
+    mock_client.send_media_group = AsyncMock(side_effect=flaky_send_media_group)
+
+    m1 = SimpleNamespace(
+        id=368, media_group_id="mg_368", has_protected_content=True,
+        caption="Album 368", text=None, empty=False, service=False, dice=None, location=None,
+        photo=SimpleNamespace(file_size=40000), video=None, document=None, sticker=None,
+        animation=None, audio=None, voice=None, video_note=None, poll=None,
+    )
+    m2 = SimpleNamespace(
+        id=369, media_group_id="mg_368", has_protected_content=True,
+        caption=None, text=None, empty=False, service=False, dice=None, location=None,
+        photo=None, video=SimpleNamespace(file_size=95000000, width=1280, height=720, duration=60, thumbs=[]),
+        document=None, sticker=None, animation=None, audio=None, voice=None, video_note=None, poll=None,
+    )
+
+    task = TaskResponse(
+        id=3680,
+        owner_id=1,
+        name="Teste FilePartMissing",
+        mode=TaskMode.HISTORICAL,
+        origin_chat="-1001",
+        dest_chat="-1002",
+        clean_forward=True,
+        status="pending",
+        media_types=["all"],
+        created_at="2026-01-01",
+        updated_at="2026-01-01",
+    )
+
+    with patch.object(cloner_engine, "log", AsyncMock()), \
+         patch("asyncio.sleep", AsyncMock()):
+        sent = await cloner_engine._send_transformed_media_group(
+            client=mock_client,
+            origin_chat="-1001",
+            dest_chat="-1002",
+            media_group=[m1, m2],
+            task=task,
+            transformed_caption="Album 368",
+        )
+
+    assert len(sent) == 2
+    assert send_calls == 2
+    # Downloaded only once (not re-downloaded on FilePartMissing retry)
+    assert mock_client.download_media.await_count == 2
+    cloner_engine._reupload_warned_tasks.discard(3680)
