@@ -293,8 +293,8 @@ async def test_historical_cloner_batch_fetch_and_prefetch(monkeypatch):
         assert mock_client.get_messages.await_count == 1
         # Local grouping from batch means get_media_group was not needed
         mock_client.get_media_group.assert_not_awaited()
-        # Client transmission limit upgraded to 8
-        assert mock_client.max_concurrent_transmissions >= 8
+        # Client transmission limit configured to 1 per direction (1 download + 1 upload in parallel)
+        assert mock_client.max_concurrent_transmissions == 1
 
         final_task = await get_task(1, created.id)
         assert final_task.status == TaskStatus.COMPLETED
@@ -305,3 +305,43 @@ async def test_historical_cloner_batch_fetch_and_prefetch(monkeypatch):
         recorded_ids = await get_task_copied_message_ids(created.id)
         assert recorded_ids == [1, 2, 3, 4, 5]
         cloner_engine._reupload_warned_tasks.discard(created.id)
+
+
+@pytest.mark.asyncio
+async def test_download_single_media_retries_on_closed_tcp_transport():
+    import io
+    from types import SimpleNamespace
+
+    mock_client = AsyncMock()
+    mock_client.me = SimpleNamespace(is_premium=True, id=1)
+    mock_client.max_concurrent_transmissions = 1
+
+    calls = 0
+
+    async def flaky_download(target, *args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError("unable to perform operation on <TCPTransport closed=True>; the handler is closed")
+        if calls == 2:
+            # Simulate Pyrogram returning an empty 0-byte BytesIO after swallowed error
+            return io.BytesIO(b"")
+        buf = io.BytesIO(b"valid_video_payload")
+        buf.name = "video.mp4"
+        return buf
+
+    mock_client.download_media = AsyncMock(side_effect=flaky_download)
+
+    msg = SimpleNamespace(
+        id=77,
+        video=SimpleNamespace(file_size=50000, width=1280, height=720, duration=15, thumbs=[]),
+        photo=None, document=None, audio=None, voice=None, animation=None, sticker=None, video_note=None,
+    )
+
+    with patch("core.cloner_engine._interruptible_sleep", AsyncMock(return_value=True)):
+        dl = await cloner_engine._download_single_media(mock_client, msg, "video", task_id=1)
+        try:
+            assert calls == 3
+            assert dl.media_input.getvalue() == b"valid_video_payload"
+        finally:
+            dl.cleanup()

@@ -57,6 +57,345 @@ def _sync_telegram_clock():
 _sync_telegram_clock()
 
 
+async def _get_or_create_media_session(client: Client, dc_id: int, force_new: bool = False):
+    """
+    Reuses a persistent MTProto media Session per dc_id in client.media_sessions
+    instead of opening/closing a new TCP connection and running DH Auth + ExportAuthorization
+    on every single file download (which causes Telegram DCs to drop TCPTransport).
+    """
+    import pyrogram.client as pc
+    from pyrogram.errors import AuthBytesInvalid
+
+    async with client.media_sessions_lock:
+        existing = client.media_sessions.get(dc_id)
+        if existing is not None:
+            conn = getattr(existing, "connection", None)
+            proto = getattr(conn, "protocol", None) if conn else None
+            is_closed = bool(getattr(proto, "closed", False)) if proto else True
+            if not force_new and existing.is_started.is_set() and not is_closed:
+                return existing
+
+            client.media_sessions.pop(dc_id, None)
+            try:
+                await existing.stop()
+            except Exception:
+                pass
+
+        home_dc = await client.storage.dc_id()
+        test_mode = await client.storage.test_mode()
+        if dc_id != home_dc:
+            auth_key = await pc.Auth(client, dc_id, test_mode).create()
+        else:
+            auth_key = await client.storage.auth_key()
+
+        session = pc.Session(
+            client,
+            dc_id,
+            auth_key,
+            test_mode,
+            is_media=True,
+        )
+        await session.start()
+
+        if dc_id != home_dc:
+            for _ in range(3):
+                exported_auth = await client.invoke(
+                    pc.raw.functions.auth.ExportAuthorization(dc_id=dc_id)
+                )
+                try:
+                    await session.invoke(
+                        pc.raw.functions.auth.ImportAuthorization(
+                            id=exported_auth.id,
+                            bytes=exported_auth.bytes,
+                        )
+                    )
+                except AuthBytesInvalid:
+                    continue
+                else:
+                    break
+            else:
+                await session.stop()
+                raise AuthBytesInvalid
+
+        client.media_sessions[dc_id] = session
+        return session
+
+
+def _patch_pyrogram_media_sessions():
+    """
+    Patches Pyrogram 2.0.106's Session.invoke and Client.get_file so that:
+    1. Closed TCPTransports fail fast on media sessions (or reconnect on main sessions)
+       instead of retrying 10 times against a closed socket.
+    2. Client.get_file reuses persistent media_sessions[dc_id] and transparently reconnects
+       mid-stream if a socket drops.
+    """
+    import pyrogram.client as pc
+    import pyrogram.session.session as ss
+    from pyrogram.errors import InternalServerError, ServiceUnavailable
+
+    if getattr(pc.Client, "_tg_clone_patched", False):
+        return
+
+    async def _patched_session_invoke(
+        self,
+        query,
+        retries: int = ss.Session.MAX_RETRIES,
+        timeout: float = ss.Session.WAIT_TIMEOUT,
+        sleep_threshold: float = ss.Session.SLEEP_THRESHOLD,
+    ):
+        try:
+            await asyncio.wait_for(self.is_started.wait(), self.WAIT_TIMEOUT)
+        except asyncio.TimeoutError:
+            pass
+
+        if isinstance(query, (ss.raw.functions.InvokeWithoutUpdates, ss.raw.functions.InvokeWithTakeout)):
+            inner_query = query.query
+        else:
+            inner_query = query
+
+        query_name = ".".join(inner_query.QUALNAME.split(".")[1:])
+
+        while True:
+            try:
+                return await self.send(query, timeout=timeout)
+            except FloodWait as e:
+                amount = e.value
+                if amount > sleep_threshold >= 0:
+                    raise
+                ss.log.warning(
+                    '[%s] Waiting for %s seconds before continuing (required by "%s")',
+                    self.client.name, amount, query_name
+                )
+                await asyncio.sleep(amount)
+            except (OSError, InternalServerError, ServiceUnavailable) as e:
+                err_str = (str(e) or repr(e)).lower()
+                is_closed_transport = isinstance(e, OSError) and (
+                    "closed" in err_str or "handler is closed" in err_str
+                )
+                if is_closed_transport:
+                    if self.is_media:
+                        # Fail fast so get_file / save_file can replace the dead media session immediately
+                        raise e from None
+                    else:
+                        # Reconnect main session before retrying
+                        if retries == 0:
+                            raise e from None
+                        try:
+                            await self.restart()
+                        except Exception:
+                            pass
+                        await asyncio.sleep(1.0)
+                        return await _patched_session_invoke(self, query, retries - 1, timeout, sleep_threshold)
+
+                if retries == 0:
+                    raise e from None
+
+                (ss.log.warning if retries < 2 else ss.log.info)(
+                    '[%s] Retrying "%s" due to: %s',
+                    ss.Session.MAX_RETRIES - retries + 1,
+                    query_name, str(e) or repr(e)
+                )
+                await asyncio.sleep(0.5)
+                return await _patched_session_invoke(self, query, retries - 1, timeout, sleep_threshold)
+
+    async def _patched_get_file(
+        self: Client,
+        file_id,
+        file_size: int = 0,
+        limit: int = 0,
+        offset: int = 0,
+        progress=None,
+        progress_args: tuple = (),
+    ):
+        async with self.get_file_semaphore:
+            file_type = file_id.file_type
+
+            if file_type == pc.FileType.CHAT_PHOTO:
+                if file_id.chat_id > 0:
+                    peer = pc.raw.types.InputPeerUser(
+                        user_id=file_id.chat_id,
+                        access_hash=file_id.chat_access_hash,
+                    )
+                else:
+                    if file_id.chat_access_hash == 0:
+                        peer = pc.raw.types.InputPeerChat(chat_id=-file_id.chat_id)
+                    else:
+                        peer = pc.raw.types.InputPeerChannel(
+                            channel_id=pc.utils.get_channel_id(file_id.chat_id),
+                            access_hash=file_id.chat_access_hash,
+                        )
+                location = pc.raw.types.InputPeerPhotoFileLocation(
+                    peer=peer,
+                    photo_id=file_id.media_id,
+                    big=file_id.thumbnail_source == pc.ThumbnailSource.CHAT_PHOTO_BIG,
+                )
+            elif file_type == pc.FileType.PHOTO:
+                location = pc.raw.types.InputPhotoFileLocation(
+                    id=file_id.media_id,
+                    access_hash=file_id.access_hash,
+                    file_reference=file_id.file_reference,
+                    thumb_size=file_id.thumbnail_size,
+                )
+            else:
+                location = pc.raw.types.InputDocumentFileLocation(
+                    id=file_id.media_id,
+                    access_hash=file_id.access_hash,
+                    file_reference=file_id.file_reference,
+                    thumb_size=file_id.thumbnail_size,
+                )
+
+            current = 0
+            total = abs(limit) or (1 << 31) - 1
+            chunk_size = 1024 * 1024
+            offset_bytes = abs(offset) * chunk_size
+            dc_id = file_id.dc_id
+
+            session = await _get_or_create_media_session(self, dc_id, force_new=False)
+
+            async def _fetch_chunk(cur_offset: int):
+                nonlocal session
+                for attempt in range(3):
+                    try:
+                        return await session.invoke(
+                            pc.raw.functions.upload.GetFile(
+                                location=location,
+                                offset=cur_offset,
+                                limit=chunk_size,
+                            ),
+                            sleep_threshold=30,
+                        )
+                    except (OSError, TimeoutError):
+                        if attempt == 2:
+                            raise
+                        await asyncio.sleep(1.0 * (attempt + 1))
+                        session = await _get_or_create_media_session(self, dc_id, force_new=True)
+
+            try:
+                r = await _fetch_chunk(offset_bytes)
+
+                if isinstance(r, pc.raw.types.upload.File):
+                    while True:
+                        chunk = r.bytes
+                        yield chunk
+
+                        current += 1
+                        offset_bytes += chunk_size
+
+                        if progress:
+                            func = pc.functools.partial(
+                                progress,
+                                min(offset_bytes, file_size) if file_size != 0 else offset_bytes,
+                                file_size,
+                                *progress_args,
+                            )
+                            if pc.inspect.iscoroutinefunction(progress):
+                                await func()
+                            else:
+                                await self.loop.run_in_executor(self.executor, func)
+
+                        if len(chunk) < chunk_size or current >= total:
+                            break
+
+                        r = await _fetch_chunk(offset_bytes)
+
+                elif isinstance(r, pc.raw.types.upload.FileCdnRedirect):
+                    test_mode = await self.storage.test_mode()
+                    cdn_session = pc.Session(
+                        self,
+                        r.dc_id,
+                        await pc.Auth(self, r.dc_id, test_mode).create(),
+                        test_mode,
+                        is_media=True,
+                        is_cdn=True,
+                    )
+                    try:
+                        await cdn_session.start()
+                        while True:
+                            r2 = await cdn_session.invoke(
+                                pc.raw.functions.upload.GetCdnFile(
+                                    file_token=r.file_token,
+                                    offset=offset_bytes,
+                                    limit=chunk_size,
+                                )
+                            )
+                            if isinstance(r2, pc.raw.types.upload.CdnFileReuploadNeeded):
+                                try:
+                                    await session.invoke(
+                                        pc.raw.functions.upload.ReuploadCdnFile(
+                                            file_token=r.file_token,
+                                            request_token=r2.request_token,
+                                        )
+                                    )
+                                except pc.VolumeLocNotFound:
+                                    break
+                                else:
+                                    continue
+
+                            chunk = r2.bytes
+                            decrypted_chunk = pc.aes.ctr256_decrypt(
+                                chunk,
+                                r.encryption_key,
+                                bytearray(
+                                    r.encryption_iv[:-4]
+                                    + (offset_bytes // 16).to_bytes(4, "big")
+                                ),
+                            )
+                            hashes = await session.invoke(
+                                pc.raw.functions.upload.GetCdnFileHashes(
+                                    file_token=r.file_token,
+                                    offset=offset_bytes,
+                                )
+                            )
+                            for i, h in enumerate(hashes):
+                                cdn_chunk = decrypted_chunk[h.limit * i : h.limit * (i + 1)]
+                                pc.CDNFileHashMismatch.check(
+                                    h.hash == pc.sha256(cdn_chunk).digest(),
+                                    "h.hash == sha256(cdn_chunk).digest()",
+                                )
+
+                            yield decrypted_chunk
+
+                            current += 1
+                            offset_bytes += chunk_size
+
+                            if progress:
+                                func = pc.functools.partial(
+                                    progress,
+                                    min(offset_bytes, file_size) if file_size != 0 else offset_bytes,
+                                    file_size,
+                                    *progress_args,
+                                )
+                                if pc.inspect.iscoroutinefunction(progress):
+                                    await func()
+                                else:
+                                    await self.loop.run_in_executor(self.executor, func)
+
+                            if len(chunk) < chunk_size or current >= total:
+                                break
+                    finally:
+                        await cdn_session.stop()
+            except pyrogram.StopTransmission:
+                raise
+            except Exception as e:
+                # Evict broken media session so next file gets a clean connection and re-raise
+                async with self.media_sessions_lock:
+                    dead = self.media_sessions.pop(dc_id, None)
+                if dead is not None:
+                    try:
+                        await dead.stop()
+                    except Exception:
+                        pass
+                pc.log.exception(e)
+                raise
+
+    ss.Session.invoke = _patched_session_invoke
+    pc.Client.get_file = _patched_get_file
+    pc.Client._tg_clone_patched = True
+
+
+_patch_pyrogram_media_sessions()
+
+
 class TelegramAuthManager:
     def __init__(self):
         self._pending_clients: Dict[str, Client] = {}
