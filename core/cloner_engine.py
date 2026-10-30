@@ -1401,273 +1401,36 @@ class ClonerEngine:
                     })
                     cursor += 1
 
-                # Sliding-window prefetch manager for protected media/albums in this batch
-                send_op_indices = [
-                    idx for idx, op in enumerate(ops)
-                    if op["kind"] in ("single", "album")
-                ]
-                prefetch_tasks: Dict[int, asyncio.Task] = {}
+                op_i = 0
+                while op_i < len(ops):
+                    op = ops[op_i]
+                    op_id = op["id"]
 
-                async def _prefetch_op(op_dict: Dict[str, Any]) -> Any:
-                    async with prefetch_sem:
-                        if op_dict["kind"] == "album":
-                            return await self._download_album_media(
-                                client, op_dict["media_group"], task_id, pause_event, cancel_event
-                            )
-                        else:
-                            return await self._download_single_media(
-                                client, op_dict["message"], op_dict["media_type"], task_id, pause_event, cancel_event
-                            )
+                    if cancel_event.is_set():
+                        await _flush_db(op_id, processed_count, copied_count, skipped_count, error_count, force=True)
+                        await self.log(task_id, "warning", "Processo cancelado.")
+                        await self._set_status(task_id, TaskStatus.CANCELLED)
+                        return
 
-                def _schedule_prefetch_window(current_send_pos: int) -> None:
-                    window_end = min(len(send_op_indices), current_send_pos + CLONER_PREFETCH_QUEUE_SIZE)
-                    for pos in range(current_send_pos, window_end):
-                        op_idx = send_op_indices[pos]
-                        if op_idx in prefetch_tasks:
-                            continue
-                        op_candidate = ops[op_idx]
-                        if op_candidate["kind"] == "album":
-                            needs_dl = (
-                                (task_id in self._reupload_warned_tasks)
-                                or any(_has_protected_content(m) for m in op_candidate["media_group"])
-                            )
-                        else:
-                            m_type = op_candidate["media_type"]
-                            needs_dl = m_type not in ("text", "poll", "empty") and (
-                                (task_id in self._reupload_warned_tasks)
-                                or _has_protected_content(op_candidate["message"])
-                            )
-                        if needs_dl:
-                            prefetch_tasks[op_idx] = asyncio.create_task(_prefetch_op(op_candidate))
+                    if not pause_event.is_set():
+                        await _flush_db(op_id, processed_count, copied_count, skipped_count, error_count, force=True)
+                        await pause_event.wait()
+                        fresh_task = await self._load_task(task_id)
+                        if fresh_task:
+                            task = fresh_task
+                            origin_chat = parse_chat_id(task.origin_chat)
+                            dest_chat = parse_chat_id(task.dest_chat)
 
-                async def _cleanup_prefetch_tasks() -> None:
-                    for p_task in list(prefetch_tasks.values()):
-                        if not p_task.done():
-                            p_task.cancel()
-                    for p_task in list(prefetch_tasks.values()):
-                        try:
-                            res = await p_task
-                            if isinstance(res, _DownloadedMedia):
-                                res.cleanup()
-                            elif isinstance(res, list):
-                                for item in res:
-                                    if isinstance(item, _DownloadedMedia):
-                                        item.cleanup()
-                        except BaseException:
-                            pass
-                    prefetch_tasks.clear()
-
-                send_pos_map = {op_idx: pos for pos, op_idx in enumerate(send_op_indices)}
-
-                try:
-                    op_i = 0
-                    while op_i < len(ops):
-                        op = ops[op_i]
-                        op_id = op["id"]
-
-                        if cancel_event.is_set():
-                            await _cleanup_prefetch_tasks()
-                            await _flush_db(op_id, processed_count, copied_count, skipped_count, error_count, force=True)
-                            await self.log(task_id, "warning", "Processo cancelado.")
-                            await self._set_status(task_id, TaskStatus.CANCELLED)
-                            return
-
-                        if not pause_event.is_set():
-                            await _cleanup_prefetch_tasks()
-                            await _flush_db(op_id, processed_count, copied_count, skipped_count, error_count, force=True)
-                            await pause_event.wait()
-                            fresh_task = await self._load_task(task_id)
-                            if fresh_task:
-                                task = fresh_task
-                                origin_chat = parse_chat_id(task.origin_chat)
-                                dest_chat = parse_chat_id(task.dest_chat)
-
-                        if op["kind"] == "skip":
-                            skipped_count += 1
-                            processed_count += 1
-                            already_copied_ids.add(op_id)
-                            pending_db_records.append({
-                                "origin_message_id": op_id,
-                                "status": "skipped",
-                                "dest_message_id": None,
-                                "media_type": op["media_type"],
-                            })
-                            await _flush_db(op_id, processed_count, copied_count, skipped_count, error_count)
-                            await self.broadcast_event("task_progress", {
-                                "task_id": task_id,
-                                "current": op_id,
-                                "total": total_msgs,
-                                "copied": copied_count,
-                                "skipped": skipped_count,
-                                "errors": error_count,
-                                "percent": round(min(100.0, (processed_count / total_msgs) * 100), 1),
-                            })
-                            op_i += 1
-                            continue
-
-                        # Schedule prefetch window for current & upcoming media items
-                        if op_i in send_pos_map:
-                            _schedule_prefetch_window(send_pos_map[op_i])
-
-                        prefetched_data = None
-                        if op_i in prefetch_tasks:
-                            p_task = prefetch_tasks.pop(op_i)
-                            try:
-                                prefetched_data = await p_task
-                            except TaskPausedDuringWait:
-                                await _cleanup_prefetch_tasks()
-                                await _flush_db(op_id, processed_count, copied_count, skipped_count, error_count, force=True)
-                                await pause_event.wait()
-                                continue
-                            except asyncio.CancelledError:
-                                raise
-                            except Exception:
-                                prefetched_data = None
-
-                        if op["kind"] == "album":
-                            media_group = op["media_group"]
-                            group_msg_ids = [m.id for m in media_group]
-                            album_caption = next((m.caption for m in media_group if getattr(m, "caption", None)), None)
-                            transformed_caption = apply_text_transformations(
-                                text=album_caption,
-                                remove_captions=bool(getattr(task, "remove_captions", False)),
-                                remove_links=task.remove_links,
-                                remove_mentions=task.remove_mentions,
-                                custom_replacements=task.custom_replacements,
-                                header_text=task.header_text,
-                                footer_text=task.footer_text,
-                            )
-                            try:
-                                await pause_event.wait()
-                                sent_group = await self._send_transformed_media_group(
-                                    client=client,
-                                    origin_chat=origin_chat,
-                                    dest_chat=dest_chat,
-                                    media_group=media_group,
-                                    task=task,
-                                    transformed_caption=transformed_caption,
-                                    pause_event=pause_event,
-                                    cancel_event=cancel_event,
-                                    prefetched_album=prefetched_data,
-                                )
-                               # Ensure next items start prefetching if protected mode was just discovered
-                                if op_i in send_pos_map:
-                                    _schedule_prefetch_window(send_pos_map[op_i] + 1)
-
-                                for m_idx, m_item in enumerate(media_group):
-                                    dest_id = sent_group[m_idx].id if (sent_group and m_idx < len(sent_group)) else None
-                                    pending_db_records.append({
-                                        "origin_message_id": m_item.id,
-                                        "status": "copied",
-                                        "dest_message_id": dest_id,
-                                        "media_type": "album",
-                                    })
-                                    already_copied_ids.add(m_item.id)
-
-                                copied_count += len(media_group)
-                                processed_count += len(media_group)
-                                max_gid = max(group_msg_ids)
-
-                                await self.log(
-                                    task_id,
-                                    "success",
-                                    f"Álbum com {len(media_group)} mídias (IDs: {min(group_msg_ids)} a {max_gid}) clonado com sucesso!"
-                                )
-                                await _flush_db(max_gid, processed_count, copied_count, skipped_count, error_count)
-                                await self.broadcast_event("task_progress", {
-                                    "task_id": task_id,
-                                    "current": max_gid,
-                                    "total": total_msgs,
-                                    "copied": copied_count,
-                                    "skipped": skipped_count,
-                                    "errors": error_count,
-                                    "percent": round(min(100.0, (processed_count / total_msgs) * 100), 1),
-                                })
-                                try:
-                                    await _interruptible_sleep(task.delay_seconds, pause_event, cancel_event)
-                                except TaskPausedDuringWait:
-                                    await _cleanup_prefetch_tasks()
-                                    await _flush_db(max_gid, processed_count, copied_count, skipped_count, error_count, force=True)
-                                    await pause_event.wait()
-                                op_i += 1
-                                continue
-                            except TaskPausedDuringWait:
-                                await _cleanup_prefetch_tasks()
-                                await _flush_db(op_id, processed_count, copied_count, skipped_count, error_count, force=True)
-                                await pause_event.wait()
-                                continue
-                            except Exception as e:
-                                error_count += len(media_group)
-                                processed_count += len(media_group)
-                                for m_item in media_group:
-                                    pending_db_records.append({
-                                        "origin_message_id": m_item.id,
-                                        "status": "error",
-                                        "dest_message_id": None,
-                                        "media_type": "album",
-                                    })
-                                    already_copied_ids.add(m_item.id)
-                                await self.log(task_id, "error", f"Erro ao clonar álbum {group_msg_ids}: {str(e)}")
-                                await _flush_db(max(group_msg_ids), processed_count, copied_count, skipped_count, error_count)
-                                op_i += 1
-                                continue
-
-                        # Single message
-                        message = op["message"]
-                        media_type = op["media_type"]
-                        try:
-                            await pause_event.wait()
-                            sent = await self._send_transformed_message(
-                                client,
-                                message,
-                                dest_chat,
-                                task,
-                                task.clean_forward,
-                                pause_event=pause_event,
-                                cancel_event=cancel_event,
-                                prefetched_media=prefetched_data,
-                            )
-                            # Ensure next items start prefetching if protected mode was just discovered
-                            if op_i in send_pos_map:
-                                _schedule_prefetch_window(send_pos_map[op_i] + 1)
-
-                            copied_count += 1
-                            processed_count += 1
-                            dest_msg_id = sent.id if sent else None
-                            already_copied_ids.add(op_id)
-                            pending_db_records.append({
-                                "origin_message_id": op_id,
-                                "status": "copied",
-                                "dest_message_id": dest_msg_id,
-                                "media_type": media_type,
-                            })
-                            # Persist log to SQL for small tasks or periodic milestones; always broadcast to live UI
-                            if total_msgs <= 500 or copied_count <= 5 or copied_count % 25 == 0:
-                                await self.log(task_id, "success", f"Mensagem {op_id}/{last_message_id} ({media_type}) clonada com sucesso!")
-                            else:
-                                await self.broadcast_event("log", {
-                                    "task_id": task_id,
-                                    "level": "success",
-                                    "message": f"Mensagem {op_id}/{last_message_id} ({media_type}) clonada com sucesso!",
-                                })
-                        except TaskPausedDuringWait:
-                            await _cleanup_prefetch_tasks()
-                            await _flush_db(op_id, processed_count, copied_count, skipped_count, error_count, force=True)
-                            await self.log(task_id, "warning", f"Pausa durante a mensagem {op_id}. Aguardando retomada...")
-                            await pause_event.wait()
-                            continue
-                        except Exception as e:
-                            error_count += 1
-                            processed_count += 1
-                            already_copied_ids.add(op_id)
-                            pending_db_records.append({
-                                "origin_message_id": op_id,
-                                "status": "error",
-                                "dest_message_id": None,
-                                "media_type": media_type,
-                            })
-                            await self.log(task_id, "error", f"Msg {op_id}: Erro ao clonar: {str(e)}")
-
+                    if op["kind"] == "skip":
+                        skipped_count += 1
+                        processed_count += 1
+                        already_copied_ids.add(op_id)
+                        pending_db_records.append({
+                            "origin_message_id": op_id,
+                            "status": "skipped",
+                            "dest_message_id": None,
+                            "media_type": op["media_type"],
+                        })
                         await _flush_db(op_id, processed_count, copied_count, skipped_count, error_count)
                         await self.broadcast_event("task_progress", {
                             "task_id": task_id,
@@ -1678,16 +1441,158 @@ class ClonerEngine:
                             "errors": error_count,
                             "percent": round(min(100.0, (processed_count / total_msgs) * 100), 1),
                         })
+                        op_i += 1
+                        continue
 
+                    if op["kind"] == "album":
+                        media_group = op["media_group"]
+                        group_msg_ids = [m.id for m in media_group]
+                        album_caption = next((m.caption for m in media_group if getattr(m, "caption", None)), None)
+                        transformed_caption = apply_text_transformations(
+                            text=album_caption,
+                            remove_captions=bool(getattr(task, "remove_captions", False)),
+                            remove_links=task.remove_links,
+                            remove_mentions=task.remove_mentions,
+                            custom_replacements=task.custom_replacements,
+                            header_text=task.header_text,
+                            footer_text=task.footer_text,
+                        )
                         try:
-                            await _interruptible_sleep(task.delay_seconds, pause_event, cancel_event)
+                            await pause_event.wait()
+                            sent_group = await self._send_transformed_media_group(
+                                client=client,
+                                origin_chat=origin_chat,
+                                dest_chat=dest_chat,
+                                media_group=media_group,
+                                task=task,
+                                transformed_caption=transformed_caption,
+                                pause_event=pause_event,
+                                cancel_event=cancel_event,
+                            )
+
+                            for m_idx, m_item in enumerate(media_group):
+                                dest_id = sent_group[m_idx].id if (sent_group and m_idx < len(sent_group)) else None
+                                pending_db_records.append({
+                                    "origin_message_id": m_item.id,
+                                    "status": "copied",
+                                    "dest_message_id": dest_id,
+                                    "media_type": "album",
+                                })
+                                already_copied_ids.add(m_item.id)
+
+                            copied_count += len(media_group)
+                            processed_count += len(media_group)
+                            max_gid = max(group_msg_ids)
+
+                            await self.log(
+                                task_id,
+                                "success",
+                                f"Álbum com {len(media_group)} mídias (IDs: {min(group_msg_ids)} a {max_gid}) clonado com sucesso!"
+                            )
+                            await _flush_db(max_gid, processed_count, copied_count, skipped_count, error_count)
+                            await self.broadcast_event("task_progress", {
+                                "task_id": task_id,
+                                "current": max_gid,
+                                "total": total_msgs,
+                                "copied": copied_count,
+                                "skipped": skipped_count,
+                                "errors": error_count,
+                                "percent": round(min(100.0, (processed_count / total_msgs) * 100), 1),
+                            })
+                            try:
+                                await _interruptible_sleep(task.delay_seconds, pause_event, cancel_event)
+                            except TaskPausedDuringWait:
+                                await _flush_db(max_gid, processed_count, copied_count, skipped_count, error_count, force=True)
+                                await pause_event.wait()
+                            op_i += 1
+                            continue
                         except TaskPausedDuringWait:
-                            await _cleanup_prefetch_tasks()
                             await _flush_db(op_id, processed_count, copied_count, skipped_count, error_count, force=True)
                             await pause_event.wait()
-                        op_i += 1
-                finally:
-                    await _cleanup_prefetch_tasks()
+                            continue
+                        except Exception as e:
+                            error_count += len(media_group)
+                            processed_count += len(media_group)
+                            for m_item in media_group:
+                                pending_db_records.append({
+                                    "origin_message_id": m_item.id,
+                                    "status": "error",
+                                    "dest_message_id": None,
+                                    "media_type": "album",
+                                })
+                                already_copied_ids.add(m_item.id)
+                            await self.log(task_id, "error", f"Erro ao clonar álbum {group_msg_ids}: {str(e)}")
+                            await _flush_db(max(group_msg_ids), processed_count, copied_count, skipped_count, error_count)
+                            op_i += 1
+                            continue
+
+                    # Single message
+                    message = op["message"]
+                    media_type = op["media_type"]
+                    try:
+                        await pause_event.wait()
+                        sent = await self._send_transformed_message(
+                            client,
+                            message,
+                            dest_chat,
+                            task,
+                            task.clean_forward,
+                            pause_event=pause_event,
+                            cancel_event=cancel_event,
+                        )
+
+                        copied_count += 1
+                        processed_count += 1
+                        dest_msg_id = sent.id if sent else None
+                        already_copied_ids.add(op_id)
+                        pending_db_records.append({
+                            "origin_message_id": op_id,
+                            "status": "copied",
+                            "dest_message_id": dest_msg_id,
+                            "media_type": media_type,
+                        })
+                        if total_msgs <= 500 or copied_count <= 5 or copied_count % 25 == 0:
+                            await self.log(task_id, "success", f"Mensagem {op_id}/{last_message_id} ({media_type}) clonada com sucesso!")
+                        else:
+                            await self.broadcast_event("log", {
+                                "task_id": task_id,
+                                "level": "success",
+                                "message": f"Mensagem {op_id}/{last_message_id} ({media_type}) clonada com sucesso!",
+                            })
+                    except TaskPausedDuringWait:
+                        await _flush_db(op_id, processed_count, copied_count, skipped_count, error_count, force=True)
+                        await self.log(task_id, "warning", f"Pausa durante a mensagem {op_id}. Aguardando retomada...")
+                        await pause_event.wait()
+                        continue
+                    except Exception as e:
+                        error_count += 1
+                        processed_count += 1
+                        already_copied_ids.add(op_id)
+                        pending_db_records.append({
+                            "origin_message_id": op_id,
+                            "status": "error",
+                            "dest_message_id": None,
+                            "media_type": media_type,
+                        })
+                        await self.log(task_id, "error", f"Msg {op_id}: Erro ao clonar: {str(e)}")
+
+                    await _flush_db(op_id, processed_count, copied_count, skipped_count, error_count)
+                    await self.broadcast_event("task_progress", {
+                        "task_id": task_id,
+                        "current": op_id,
+                        "total": total_msgs,
+                        "copied": copied_count,
+                        "skipped": skipped_count,
+                        "errors": error_count,
+                        "percent": round(min(100.0, (processed_count / total_msgs) * 100), 1),
+                    })
+
+                    try:
+                        await _interruptible_sleep(task.delay_seconds, pause_event, cancel_event)
+                    except TaskPausedDuringWait:
+                        await _flush_db(op_id, processed_count, copied_count, skipped_count, error_count, force=True)
+                        await pause_event.wait()
+                    op_i += 1
 
                 current_id = max(cursor, batch_end + 1)
 
